@@ -10,3 +10,4 @@ datasets
 accelerate
 peft
 bitsandbytes
+openenv

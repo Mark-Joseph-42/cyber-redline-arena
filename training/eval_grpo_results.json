@@ -1,14 +1,3 @@
-{
-  "heuristic": {
-    "win_rate": 0.88,
-    "avg_reward": 150.3352
-  },
-  "grpo": {
-    "tag": "GRPO",
-    "win_rate": 0.0,
-    "avg_reward": -33.557600000000015,
-    "avg_detection": 37.16,
-    "wins": 0,
-    "episodes": 50
-  }
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:edaab23a3fbfb9ade8ddf705bd2e0b2ffb46f11803393a7bc7678eb084ff100b
+size 244

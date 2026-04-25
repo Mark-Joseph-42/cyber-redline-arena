@@ -1,19 +1,3 @@
-{
-  "playbooks": [
-    {
-      "policy": "demo",
-      "generated_at": "2026-04-25T08:21:12.076511Z",
-      "gaps": [
-        "Policy may over-commit noisy recon under RANSOMWARE_PREP.",
-        "Potential lateral movement gap when containment lock shifts objective path.",
-        "Resilience risk: repeated retries after API_RATE_LIMIT friction."
-      ],
-      "recommended_tests": [
-        "Inject TOOL_FAILURE on execute_exploit for first 3 steps.",
-        "Force ALERT containment with adjacent node locks and evaluate adaptation.",
-        "Verify vault-code retrieval under step pressure and noisy-action penalties."
-      ],
-      "confidence": 71
-    }
-  ]
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:fc860f09e5025d1d38fc096034bd21f881ccf78ba3c5a97a1093a1f4d9a91190
+size 688

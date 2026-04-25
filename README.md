@@ -284,6 +284,11 @@ After SFT on 447 expert trajectories generated from the optimal heuristic agent:
 | FINANCIAL_HEIST | **10/10** | ~8/10 | +152.7 |
 | APT_CAMPAIGN | 6/10 | ~7/10 | +121.0 |
 
+![Training Curves + Comparison](results/training_curves.png)
+*Left: SFT loss curve (0.30 → 0.0024 over 336 steps). Right: Win rate comparison — Base 0% → SFT 86% → Heuristic 88%.*
+
+> 📊 **Machine-readable results:** [`training/eval_results.json`](training/eval_results.json) — full per-scenario breakdown, training metadata, and summary delta stats.
+
 ### Step 5: How Safeguards Stopped Shortcuts
 
 - **SIEM escalation** — Every loud action raises detection. At 90+, the agent is hard-expelled. A model that ignores this cannot physically win; the environment terminates the episode with a -30 penalty.
@@ -313,6 +318,8 @@ python training/sft_training.py --epochs 3 --lr 2e-4
 # Step 3: Evaluate trained model (50 episodes, ~12 min)
 python training/eval_agent.py --adapter training/sft-cyber-lora --skip-base
 ```
+
+> 📓 **Colab Notebook:** [`training/colab_sft_training.ipynb`](training/colab_sft_training.ipynb) — runs all 3 steps end-to-end on a free T4 GPU.
 
 **SFT training results:**
 - Loss dropped from `~0.30` → `~0.0024` over 336 steps (3 epochs)
