@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
-"""HuggingFace login and model download for DPO training."""
-import subprocess, sys, os
+"""HuggingFace token verification and model access check via env var."""
+import os, sys
 
-# Read token from environment variable — never hardcode tokens in source files
+# The HUGGING_FACE_HUB_TOKEN env var is read automatically by transformers/huggingface_hub
+# without needing an interactive login() call.
 TOKEN = os.environ.get("HF_TOKEN", "")
 if not TOKEN:
-    TOKEN = input("Enter your HuggingFace token: ").strip()
+    print("ERROR: HF_TOKEN env var not set")
+    sys.exit(1)
 
-print("=== Upgrading HuggingFace Hub ===")
-os.system("pip3 install -q --upgrade huggingface_hub transformers")
+# Set both env vars that HF hub checks
+os.environ["HUGGING_FACE_HUB_TOKEN"] = TOKEN
+os.environ["HF_TOKEN"] = TOKEN
 
-print("=== HuggingFace Login ===")
-from huggingface_hub import login
-login(token=TOKEN, add_to_git_credential=False)
-print("Login OK")
-
-print("\n=== Pre-downloading Qwen/Qwen2.5-4B-Instruct ===")
-print("Downloading model weights (~8GB) — takes 10-20 min on typical connection...")
+print(f"=== HuggingFace Token Verification ===")
+print(f"Token: {TOKEN[:8]}...{TOKEN[-4:]} (masked)")
 
 from transformers import AutoTokenizer, AutoConfig
+import warnings
+warnings.filterwarnings("ignore")
 
-# Download tokenizer first (fast)
-print("Step 1/2: Downloading tokenizer...")
+print("\nStep 1/2: Downloading tokenizer...")
 tok = AutoTokenizer.from_pretrained(
     "Qwen/Qwen2.5-4B-Instruct",
     token=TOKEN,
@@ -29,13 +28,12 @@ tok = AutoTokenizer.from_pretrained(
 )
 print(f"Tokenizer OK — vocab size: {tok.vocab_size}")
 
-# Download config (validates model access)
-print("Step 2/2: Verifying model access...")
+print("\nStep 2/2: Verifying config access...")
 cfg = AutoConfig.from_pretrained(
     "Qwen/Qwen2.5-4B-Instruct",
     token=TOKEN,
     trust_remote_code=True
 )
 print(f"Config OK — model type: {cfg.model_type}")
-print("\nFull model weights will be downloaded automatically when training starts.")
-print("Ready to train!")
+print("\nModel accessible. Full weights will download when training starts.")
+print("READY TO TRAIN")

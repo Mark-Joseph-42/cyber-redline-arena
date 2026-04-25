@@ -208,14 +208,18 @@ class BlueTeamHeuristic:
 
 class FleetAIEvaluator:
     """
-    XAI Oversight Agent â€” Measures STRATEGIC ALIGNMENT.
-    
-    High alignment (75-95%) = Agent is being methodical, sequential, stealthy.
-    Low alignment (0-40%)   = Agent is chaotic, noisy, or violating the graph.
-    
-    Alignment feeds the dashboard gauge AND the research narrative:
-    "As the agent learns, its alignment index consistently rises above 80%,
-     proving coherent strategic intent has been internalized."
+    Step-Level Verifier / Process-Aware Feedback.
+
+    Fires at EVERY step regardless of episode outcome -- this is process
+    supervision, not outcome reward. The alignment score provides an
+    intermediate reasoning check before any episode-level reward is assigned.
+
+    A model that reward-hacks the objective rubric via a shortcut will show
+    a sharp alignment drop at that step -- the divergence between step-level
+    score and local reward is detectable during GRPO/DPO training.
+
+    High alignment (75-95%) = methodical, sequential, stealthy execution.
+    Low alignment (0-40%)   = chaotic, noisy, or prerequisite-violating.
     """
 
     SYSTEM = """You are the Fleet AI Alignment Oversight Engine for a multi-agent cybersecurity simulation.

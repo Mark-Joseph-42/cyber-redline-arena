@@ -1,33 +1,41 @@
-"""
+﻿"""
 Cyber-Redline Arena v3 â€” Dynamic Multi-Agent Adversarial Environment
 OpenEnv Hackathon 2026 | Theme 1: Multi-Agent + Fleet AI Bonus
 
 Environment Innovation:
-  - 5 distinct scenario templates, randomly selected each episode
-  - Dynamic network topology (3-6 nodes per scenario)
-  - Honeyp ot nodes that punish careless lateral movement
-  - Composable Rubric reward system (Stealth + Chain + Objective + OpSec)
+  - 4 independent rubric verifiers (Stealth, Chain, Objective, OpSec)
+  - 5 curriculum-ordered scenarios from low to high horizon
   - Adaptive Blue Team that escalates detection tier dynamically
-  - Hardened nodes requiring multiple exploit attempts
-  - Optional passive SIEM detection and time-pressure mechanics
+  - VaultGuard evolving access control (CODE_GATE -> RATE_LIMITED)
+  - Fleet AI step-level process supervision at every action
+  - Honeypot nodes and hardened targets prevent shortcut exploitation
 """
 
 import gymnasium as gym
 import random
 import copy
 from gymnasium import spaces
-from openenv.core import Environment
+from .vault import VaultGuard
+try:
+    from openenv.core import Environment as _OpenEnvBase
+except ImportError:
+    # Fallback for training environments where openenv may not be installed
+    import gymnasium as _gym
+    _OpenEnvBase = _gym.Env
+
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# SCENARIO TEMPLATES
-# Each scenario is a fresh challenge with different topology, difficulty, and
-# special mechanics. Agents must adapt, not memorize a fixed solution.
+# SCENARIO TEMPLATES -- CURRICULUM ORDER (Entry -> High Horizon)
+# Ordered from simplest (fewest nodes, shortest horizon) to most complex.
+# GRPO training benefits from starting on tractable tasks.
+# Each scenario includes a curriculum_level tag for curriculum samplers.
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 SCENARIOS = {
 
     "CORPORATE_BREACH": {
+        "curriculum_level": "INTERMEDIATE",
         "description": "A Fortune 500 HR firm. Exfiltrate from the core database without alerting the SIEM.",
         "nodes": [
             {"id": "web_dmz",        "label": "Public Web Server", "hardness": 1, "is_honeypot": False, "prereq": []},
@@ -42,6 +50,7 @@ SCENARIOS = {
     },
 
     "APT_CAMPAIGN": {
+        "curriculum_level": "HIGH_HORIZON",  # 5-hop chain, strictest Blue tier
         "description": "Nation-state APT operation. Persist inside critical infrastructure undetected.",
         "nodes": [
             {"id": "entry_fw",     "label": "Perimeter Firewall",            "hardness": 1, "is_honeypot": False, "prereq": []},
@@ -57,6 +66,7 @@ SCENARIOS = {
     },
 
     "RANSOMWARE_PREP": {
+        "curriculum_level": "ENTRY",   # 3 nodes, no honeypots, shortest horizon
         "description": "Race against the clock. Encrypt backups before Blue Team locks you out.",
         "nodes": [
             {"id": "web_app",    "label": "Vulnerable Web App", "hardness": 1, "is_honeypot": False, "prereq": []},
@@ -70,6 +80,7 @@ SCENARIOS = {
     },
 
     "FINANCIAL_HEIST": {
+        "curriculum_level": "HARD",
         "description": "Bypass MFA and SIEM to exfiltrate trading data before the market opens.",
         "nodes": [
             {"id": "trading_portal", "label": "Trading Web Portal",  "hardness": 1, "is_honeypot": False, "prereq": []},
@@ -84,6 +95,7 @@ SCENARIOS = {
     },
 
     "ZERO_DAY_WINDOW": {
+        "curriculum_level": "INTERMEDIATE",
         "description": "A zero-day exploit window is open. Randomized vulnerabilities â€” adapt or fail.",
         "nodes": [
             {"id": "net_perimeter", "label": "Network Perimeter", "hardness": 1, "is_honeypot": False, "prereq": []},
@@ -98,7 +110,9 @@ SCENARIOS = {
     },
 }
 
-SCENARIO_NAMES = list(SCENARIOS.keys())
+# Curriculum progression list -- use for weighted sampling during GRPO training.
+CURRICULUM_ORDER = ["RANSOMWARE_PREP", "ZERO_DAY_WINDOW", "CORPORATE_BREACH", "FINANCIAL_HEIST", "APT_CAMPAIGN"]
+SCENARIO_NAMES   = CURRICULUM_ORDER  # random sampling follows curriculum order
 
 
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -106,14 +120,23 @@ SCENARIO_NAMES = list(SCENARIOS.keys())
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 class StealthRubric:
-    """Continuous penalty proportional to detection level. Small so it doesn't swamp objective reward."""
+    """
+    Independent Verifier: Noise / Detection Axis.
+    Prevents loud-tool spamming -- nmap raises detection by +15 per call,
+    making it continuously costly. Score: 0 det=0 penalty, 100 det=-8 penalty.
+    """
     name = "STEALTH"
     def score(self, detection_level, **kwargs):
         # Scale: 0 det = 0 penalty, 100 det = -8 penalty (not crippling)
         return round(-0.08 * detection_level, 2)
 
 class ChainProgressionRubric:
-    """Rewards correct sequential movement through the attack graph."""
+    """
+    Independent Verifier: Prerequisite Ordering Axis.
+    Prevents shortcutting the attack graph -- reward only fires when the
+    full probe->exploit chain is respected. Harder nodes yield bigger rewards
+    to incentivise patience over brute-force.
+    """
     name = "CHAIN_PROGRESSION"
     def score(self, prereq_satisfied=False, action_successful=False, node_hardness=1, **kwargs):
         if prereq_satisfied and action_successful:
@@ -121,7 +144,12 @@ class ChainProgressionRubric:
         return 0.0
 
 class ObjectiveRubric:
-    """Terminal reward for capturing the flag. Partial credit for interim nodes."""
+    """
+    Independent Verifier: Goal Completion Axis.
+    Partial credit for lateral movement prevents ignoring intermediate nodes.
+    Flag capture also requires VaultGuard access, closing the shortcut of
+    exploiting the objective node directly without prior lateral movement.
+    """
     name = "OBJECTIVE"
     def score(self, node_compromised=None, is_objective=False, **kwargs):
         if node_compromised and is_objective:
@@ -131,7 +159,12 @@ class ObjectiveRubric:
         return 0.0
 
 class OpSecRubric:
-    """Hard punishment for honeypot triggers and Redline violations."""
+    """
+    Independent Verifier: Operational Security Axis.
+    Hard non-gameable penalties: honeypot triggers (-50) and prerequisite
+    violations (-30) are immediately expensive, making random exploration
+    deeply negative and honeypot avoidance a necessary learned behaviour.
+    """
     name = "OPSEC"
     def score(self, honeypot_triggered=False, redline_violation=False, **kwargs):
         penalty = 0.0
@@ -146,7 +179,7 @@ class OpSecRubric:
 # MAIN ENVIRONMENT
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-class CyberRedlineEnv(Environment):
+class CyberRedlineEnv(_OpenEnvBase):
     """
     Cyber-Redline Arena v3 â€” Dynamic Adversarial Network Environment
 
@@ -232,7 +265,13 @@ class CyberRedlineEnv(Environment):
             "blue_difficulty":  template["blue_difficulty"],
             "siem_passive":     template.get("siem_passive", False),
             "nodes_compromised": 0,
+            # Vault fields — populated as Red Team discovers the code
+            "vault_code_discovered": False,
+            "vault_code":            None,
         }
+
+        # Attach a fresh VaultGuard for this scenario
+        self.vault = VaultGuard(name)
 
         self.flag_captured = False
         return self._get_obs()
@@ -275,6 +314,7 @@ class CyberRedlineEnv(Environment):
     def step(self, action):
         self._state["steps_taken"]     += 1
         self._state["steps_remaining"] -= 1
+        self.vault.tick(self._state["steps_taken"])
 
         tool   = int(action.get("tool",   0))
         target = int(action.get("target", 0))
@@ -380,11 +420,46 @@ class CyberRedlineEnv(Environment):
                     info["stealth_score"] = 70 + (10 * node["hardness"])
 
                     if node_id == self._state["objective"]:
-                        self._state["flag_captured"] = True
-                        self.flag_captured = True
-                        info["logs"].append(f"[RED] *** {node['label']} EXFILTRATED! FLAG CAPTURED! ***")
+                        # -- Vault access gate --------------------------------
+                        # Red Team must present the discovered code to actually
+                        # exfiltrate. Without it they only reach the outer shell.
+                        code = self._state.get("vault_code") or ""
+                        vault_ok, vault_msg = self.vault.attempt_access(code)
+                        info["logs"].append(vault_msg)
+                        info["vault_status"] = self.vault.status_dict()
+
+                        if vault_ok:
+                            self._state["flag_captured"] = True
+                            self.flag_captured = True
+                            info["logs"].append(
+                                f"[RED] *** {node['label']} EXFILTRATED! FLAG CAPTURED! ***"
+                            )
+                        else:
+                            # Shell reached but vault denied -- partial reward only
+                            rubric_kwargs["is_objective"] = False
+                            info["logs"].append(
+                                "[RED] Objective node reached but vault locked -- "
+                                "find the access code first."
+                            )
                     else:
-                        info["logs"].append(f"[RED] {node['label']} COMPROMISED! Lateral movement successful.")
+                        info["logs"].append(
+                            f"[RED] {node['label']} COMPROMISED! Lateral movement successful."
+                        )
+                        # -- Code discovery -----------------------------------
+                        # Compromising the node that holds the vault code reveals
+                        # it to Red Team for use on the objective node.
+                        if (
+                            node_id == self.vault.code_hidden_in
+                            and not self._state["vault_code_discovered"]
+                        ):
+                            self._state["vault_code_discovered"] = True
+                            self._state["vault_code"] = self.vault._access_code
+                            info["vault_code_discovered"] = True
+                            info["vault_code"] = self._state["vault_code"]
+                            info["logs"].append(
+                                f"[RED] * Access code extracted from {node['label']}: "
+                                f"'{self._state['vault_code']}'"
+                            )
                 else:
                     # Partial damage â€” node weakened but not yet compromised
                     node["status"] = 1
@@ -393,6 +468,9 @@ class CyberRedlineEnv(Environment):
 
         # â”€â”€ Update Blue Team tier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self._update_blue_tier()
+        vault_upgrade = self.vault.evolve(self._state["blue_tier"])
+        if vault_upgrade:
+            info["logs"].append(vault_upgrade)
 
         # â”€â”€ Compute reward from composable rubrics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         rubric_kwargs["detection_level"] = self._state["detection_level"]
@@ -433,4 +511,5 @@ class CyberRedlineEnv(Environment):
             status = ["HEALTHY", "DAMAGED", "COMPROMISED"][n["status"]]
             hp = "ðŸ¯HONEYPOT" if n["is_honeypot"] else ""
             print(f"  {n['label']}: {status} {hp}")
+
 

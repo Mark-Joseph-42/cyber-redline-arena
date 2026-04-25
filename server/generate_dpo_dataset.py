@@ -24,7 +24,7 @@ from server.agents import HeuristicRedAgent
 os.makedirs("training", exist_ok=True)
 
 # ── Config ──────────────────────────────────────────────────────────────────
-PAIRS_PER_SCENARIO = 8    # × 5 scenarios = 40 pairs total (solid DPO dataset)
+PAIRS_PER_SCENARIO = 16   # × 5 scenarios = 80 base pairs, plus hard pairs = ~240 total
 SEED               = 42
 
 
@@ -128,10 +128,12 @@ def action_to_response(action, obs, tone="good"):
 
 def generate_bad_action(obs, good_action):
     """
-    Generate a specifically bad action for maximum DPO contrast:
-    - If good action is http_get → rejected is execute_exploit (skip probe)
-    - If good action is execute_exploit → rejected is nmap (loud) or honeypot
-    - Never generate the same action as chosen
+    Generate a specifically bad action for maximum DPO contrast.
+    Now includes nuanced "hard" negatives: legal but suboptimal actions.
+    Contrast categories:
+      - CATASTROPHIC: honeypot attack, skip-probe exploit (+40-80 delta)
+      - HARD NEGATIVE: nmap instead of http_get, wrong node order (+5-25 delta)
+    Having both forces the model to learn gradient preferences, not just good-vs-terrible.
     """
     nodes    = obs.get("nodes", {})
     node_ids = list(nodes.keys())
@@ -143,22 +145,30 @@ def generate_bad_action(obs, good_action):
 
     strategies = []
 
-    if good_tool == 1:  # good = http_get → bad = immediate exploit (wrong order)
-        strategies.append({"tool": 2, "target": good_target})
+    # --- CATASTROPHIC negatives (high contrast) ---
+    if good_tool == 1:  # good = http_get → bad = immediate exploit (skip probe, miss 2x bonus)
+        strategies.append(("catastrophic", {"tool": 2, "target": good_target}))
 
-    if honeypot_idx is not None:  # bad = exploit honeypot
-        strategies.append({"tool": 2, "target": honeypot_idx})
+    if honeypot_idx is not None:  # bad = exploit honeypot (+40 detection burst)
+        strategies.append(("catastrophic", {"tool": 2, "target": honeypot_idx}))
 
-    # bad = loud nmap
-    strategies.append({"tool": 0, "target": good_target})
+    # --- HARD NEGATIVE (subtle, low contrast) ---
+    # nmap instead of http_get: same info, 7.5× more detection
+    strategies.append(("hard", {"tool": 0, "target": good_target}))
 
-    # bad = execute on already-compromised or wrong node
+    # http_get on wrong node (not the next in chain)
     for i, (nid, n) in enumerate(nodes.items()):
-        if n["status"] >= 2 and i != good_target:  # already done — wasted action
-            strategies.append({"tool": 2, "target": i})
+        if i != good_target and n["status"] == 0 and not n.get("is_honeypot"):
+            strategies.append(("hard", {"tool": 1, "target": i}))
+            break
 
-    # Pick a strategy that differs from good action
-    for s in strategies:
+    # execute on already-compromised node (wasted action)
+    for i, (nid, n) in enumerate(nodes.items()):
+        if n["status"] >= 2 and i != good_target:
+            strategies.append(("hard", {"tool": 2, "target": i}))
+
+    # Pick a strategy that differs from good action — prefer catastrophic first
+    for kind, s in sorted(strategies, key=lambda x: 0 if x[0] == "catastrophic" else 1):
         if s != good_action:
             return s
 
@@ -167,9 +177,10 @@ def generate_bad_action(obs, good_action):
 
 
 # ── Generate dataset ─────────────────────────────────────────────────────────
-random.seed(SEED)
-heuristic = HeuristicRedAgent()
-scenarios  = list(__import__('server.env', fromlist=['SCENARIO_NAMES']).SCENARIO_NAMES)
+if __name__ == "__main__":
+  random.seed(SEED)
+  heuristic = HeuristicRedAgent()
+  scenarios  = list(__import__('server.env', fromlist=['SCENARIO_NAMES']).SCENARIO_NAMES)
 
 dataset    = []
 stats      = {s: {"chosen_rewards": [], "rejected_rewards": [], "pairs": 0} for s in scenarios}
@@ -212,9 +223,9 @@ for scenario in scenarios:
             # Still valid for DPO: the KEY contrast is chosen vs rejected action semantics.
             _, rejected_reward, _, _ = snap.step(rejected_action)
 
-            # Only add pairs with meaningful reward contrast (>5 difference)
+            # Only add pairs with meaningful reward contrast (lowered threshold for hard negatives)
             contrast = chosen_reward - rejected_reward
-            if contrast > 3 or info.get("node_compromised") or info.get("honeypot_triggered"):
+            if contrast > 1 or info.get("node_compromised") or info.get("honeypot_triggered"):
                 # Build the natural language pair
                 scenario_desc = env._state.get("scenario_desc", "")
                 # Reconstruct pre-action observation (use current obs but not yet done)
