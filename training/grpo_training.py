@@ -41,8 +41,12 @@ parser.add_argument("--episodes",     type=int, default=200,  help="Total traini
 parser.add_argument("--group-size",   type=int, default=8,    help="GRPO group size (num_generations)")
 parser.add_argument("--max-tokens",   type=int, default=64,   help="Max new tokens per action")
 parser.add_argument("--output-dir",   default="training/grpo-cyber-lora", help="Output directory")
+parser.add_argument("--learning-rate", type=float, default=5e-5, help="Learning rate for GRPO")
+parser.add_argument("--epochs",       type=int, default=3,    help="Number of training epochs")
 parser.add_argument("--curriculum",   action="store_true", default=True, help="Use curriculum sampling")
 parser.add_argument("--dry-run",      action="store_true", help="Validate env + reward fn, no training")
+parser.add_argument("--report-to",    default="wandb", choices=["wandb", "none"], help="Metrics backend")
+parser.add_argument("--run-name",     default=None, help="Optional explicit run name for tracking")
 args = parser.parse_args()
 
 
@@ -224,6 +228,7 @@ def run_grpo_training():
     print(f"Episodes:   {args.episodes}")
     print(f"Group size: {args.group_size}")
     print(f"Output:     {args.output_dir}")
+    print(f"Report to:  {args.report_to}")
     print("=" * 60)
 
     # Load model + tokenizer
@@ -265,18 +270,25 @@ def run_grpo_training():
     dataset = Dataset.from_list(dataset_rows)
 
     # GRPO config
+    run_name = args.run_name or os.getenv("WANDB_NAME")
+    report_backend = args.report_to
+    if report_backend == "wandb" and not os.getenv("WANDB_API_KEY"):
+        print("[WARN] WANDB_API_KEY is not set. Falling back to report_to='none'.")
+        report_backend = "none"
+
     grpo_config = GRPOConfig(
         output_dir=args.output_dir,
         num_generations=args.group_size,   # Group size for relative reward
         max_new_tokens=args.max_tokens,    # Action JSON is short
         temperature=0.8,
-        learning_rate=5e-5,
-        num_train_epochs=3,
+        learning_rate=args.learning_rate,
+        num_train_epochs=args.epochs,
         per_device_train_batch_size=1,
         gradient_accumulation_steps=4,
         logging_steps=10,
         save_steps=50,
-        report_to="none",
+        report_to=report_backend,
+        run_name=run_name,
     )
 
     trainer = GRPOTrainer(
