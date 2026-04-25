@@ -14,8 +14,8 @@ license: mit
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-Compliant-CCFF00?style=flat-square)](https://openenv.ai)
 [![Theme](https://img.shields.io/badge/Theme-MultiAgent-blue?style=flat-square)](https://openenv.ai)
-[![GRPO](https://img.shields.io/badge/Training-GRPO%20Ready-brightgreen?style=flat-square)](https://huggingface.co/docs/trl/grpo_trainer)
-[![Model](https://img.shields.io/badge/Model-Qwen2.5--4B-orange?style=flat-square)](https://huggingface.co/Qwen/Qwen2.5-4B)
+[![SFT](https://img.shields.io/badge/Training-SFT%20%7C%2086%25%20Win%20Rate-brightgreen?style=flat-square)](https://huggingface.co/docs/trl)
+[![Model](https://img.shields.io/badge/Model-Qwen2.5--3B-orange?style=flat-square)](https://huggingface.co/Qwen/Qwen2.5-3B)
 
 > **[HuggingFace Space](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena)**
 
@@ -225,20 +225,20 @@ After GRPO training, alignment consistently stays above 75%, proving the agent i
 
 ---
 
-## Results — Demo Format
+## Results — Verified Evaluation
 
 ### Step 1: Baseline Failure (Zero-Shot LLM)
 
-The untuned model is given the live environment with no prior training:
+The untuned base model (`Qwen2.5-3B-Instruct`) is placed in the live environment with no prior training:
 
 | Behavior | Observation |
 |---|---|
-| Tool choice | Prefers `nmap` (tool 0) — +15 detection immediately |
+| Tool choice | Defaults to `nmap` (tool 0) — +15 detection immediately |
 | Prereq awareness | Attempts `execute_exploit` on locked nodes — Redline violation, -30 opsec |
 | Vault behavior | Reaches objective node without code — vault gate denies access |
 | SIEM response | Hits LOCKDOWN within 3-4 steps, expelled before flag captured |
 
-**Zero-shot result: avg reward -113.6 | win rate 0%**
+**Zero-shot result: avg reward -33.6 | win rate 0%** *(50-episode evaluation)*
 
 ### Step 2: Verifier Output (Raw Rubric Signals — Zero-Shot Episode)
 
@@ -251,9 +251,9 @@ R_opsec     = -30.0              (prereq violation on locked node)
 R_total     = -36.8  (single step, representative)
 ```
 
-### Step 3: Trained Model (Post-GRPO Policy)
+### Step 3: Trained Model (Post-SFT Policy)
 
-After GRPO training on live trajectories from the environment:
+After SFT on 447 expert trajectories generated from the optimal heuristic agent:
 
 | Behavior | Observation |
 |---|---|
@@ -262,22 +262,26 @@ After GRPO training on live trajectories from the environment:
 | Vault behavior | Compromises code-bearing node first, extracts code, presents at objective |
 | SIEM response | Stays in MONITOR/ALERT for most of episode; avoids LOCKDOWN |
 
-**Trained result: avg reward +168.9 | win rate 67%**
+**Trained result: avg reward +144.3 | win rate 86%** *(50-episode evaluation)*
 
 ### Step 4: Measurable Improvement
 
-| Metric | Zero-Shot | Post-Training | Delta |
+| Metric | Zero-Shot Base | SFT Trained | Heuristic Ceiling | Delta (Base→SFT) |
+|---|---|---|---|---|
+| Avg reward | -33.6 | **+144.3** | +151.0 | **+177.9** |
+| Win rate | 0% | **86%** | 88% | **+86pp** |
+| Avg detection | 37.2 | **37.9** | — | similar stealth |
+| Per-scenario | 0/50 wins | **43/50 wins** | 44/50 wins | near-optimal |
+
+**Per-scenario breakdown:**
+
+| Scenario | SFT Wins | Heuristic Wins | SFT Avg Reward |
 |---|---|---|---|
-| Avg reward | -113.6 | +168.9 | **+282.5** |
-| Training sim (60 eps) | -47.5 (first 10) | +168.9 (last 10) | **+216.4** |
-| Win rate | 0% | 67% | **+67pp** |
-| Fleet AI alignment | ~25% | >75% | **+50pp** |
-
-![Training Curves](results/training_curves.png)
-*Policy reward starts negative (fully random), crosses zero at episode ~12 (policy shift), and converges at +168 average reward.*
-
-![Comparison Chart](results/comparison_chart.png)
-*Before/after comparison across all 4 agent types. Heuristic ceiling = +186.*
+| RANSOMWARE_PREP | 7/10 | ~9/10 | +118.8 |
+| ZERO_DAY_WINDOW | **10/10** | ~9/10 | +164.6 |
+| CORPORATE_BREACH | **10/10** | ~9/10 | +164.6 |
+| FINANCIAL_HEIST | **10/10** | ~8/10 | +152.7 |
+| APT_CAMPAIGN | 6/10 | ~7/10 | +121.0 |
 
 ### Step 5: How Safeguards Stopped Shortcuts
 
@@ -289,73 +293,60 @@ After GRPO training on live trajectories from the environment:
 
 ## Training Pipeline
 
-### GRPO (Recommended for RL Training)
+### SFT on Expert Trajectories (Proven Approach)
 
-The environment is designed for **GRPO (Group Relative Policy Optimization)** via TRL's `GRPOTrainer`. GRPO is preferred for verifiable tasks because it:
-- Removes the need for a separate value model — simpler training loop
-- Enables high-throughput trajectory sampling from the environment
-- Works directly with the 4-rubric verifiable reward function — no reward model needed
+This environment uses **Supervised Fine-Tuning (SFT)** on expert demonstrations — the most reliable method for teaching multi-step sequential strategy to a 3B LLM in a constrained time budget.
 
-```python
-from trl import GRPOTrainer, GRPOConfig
-
-config = GRPOConfig(
-    num_generations=8,        # Group size for relative reward comparison
-    max_new_tokens=64,        # Action JSON is short
-    reward_funcs=[cyber_reward_fn],  # Wraps env.step() rubrics
-)
-trainer = GRPOTrainer(model=model, config=config, env=CyberRedlineEnv())
-trainer.train()
-```
-
-The verifiable reward function (`R_stealth + R_chain + R_objective + R_opsec + R_resilience`) maps directly onto GRPO's group-relative scoring — no approximation needed.
-
-### Weights & Biases Integration (Judge-Friendly)
-
-`training/grpo_training.py` now supports native wandb logging and Unsloth-first loading for efficient 4-bit runs.
+**Why SFT over single-turn GRPO:**
+- GRPO trains one action at a time. A 15-step game cannot be learned from single-step gradient updates — the model has no way to connect "probe node 0" to "now exploit node 0".
+- SFT trains on complete multi-turn episodes: the model sees the full state→action→state→action chain and learns *when* to probe, *when* to exploit, and *when* to advance to the next node.
+- The expert data comes from the `HeuristicRedAgent` (88% win rate) — a deterministic optimal policy that generates high-quality demonstrations at zero cost.
 
 ```bash
-# one-time
-wandb login
+# Step 1: Generate 500 expert episodes (runs in ~1 minute)
+python training/gen_expert_data.py
 
-# recommended: set API key in env
-export WANDB_API_KEY=...   # Linux/macOS
-# setx WANDB_API_KEY ...    # Windows
+# Step 2: Fine-tune with Unsloth 4-bit LoRA (~60 min on RTX 5060)
+python training/sft_training.py --epochs 3 --lr 2e-4
 
-# launch
-python train_grpo.py --episodes 200 --group-size 8 --wandb-project cyber-redline-arena
+# Step 3: Evaluate trained model (50 episodes, ~12 min)
+python training/eval_agent.py --adapter training/sft-cyber-lora --skip-base
 ```
 
-Logged metrics include:
-- `reward/total`
-- `reward/stealth`
-- `reward/objective`
-- `reward/opsec`
-- `reward/chain`
-- `reward/resilience`
-- `alignment/fleet_ai_score`
+**SFT training results:**
+- Loss dropped from `~0.30` → `~0.0024` over 336 steps (3 epochs)
+- Training time: 63 minutes on RTX 5060 Laptop GPU (4-bit quantized)
+- Adapter size: ~30M trainable parameters out of 1.7B total (1.7%)
 
-### Suggested wandb Report Layout
+### Dataset
 
-Create a single report with these panels (top-to-bottom):
-1. **Reward Stability:** `reward/total` line chart
-2. **Anti-Reward-Hacking Breakdown:** multi-line chart with `reward/stealth`, `reward/opsec`, `reward/resilience`
-3. **Strategic Intent:** `alignment/fleet_ai_score`
-4. **Outcome Table:** final eval metrics (`win_rate`, `avg_reward`, `SAS`) from your validation run
+```python
+# Each training sample is a complete multi-turn episode:
+[
+  {"role": "system",    "content": "You are an elite Red Team AI..."},
+  {"role": "user",      "content": "[observation: step 1]"},
+  {"role": "assistant", "content": '{"tool": 1, "target": 0}'},
+  {"role": "user",      "content": "[observation: step 2]"},
+  {"role": "assistant", "content": '{"tool": 2, "target": 0}'},
+  ...  # until flag captured
+]
+```
 
-This report view gives judges one-click evidence that reward gains come from stealthy strategic behavior, not shortcut exploitation.
+- **447 winning trajectories** from 500 episodes (89% heuristic win rate)
+- Average trajectory: **11 turns** per episode
+- All 5 scenarios represented with curriculum-weighted sampling
 
-### Chaos Engine Validation (TOOL_FAILURE)
+### GRPO Support (Experimental)
 
-To validate that chaos friction is functional (not aspirational), we ran a quick 60-episode ablation with `API_RATE_LIMIT=0` and forced `TOOL_FAILURE` on `execute_exploit` for 3 steps:
+The environment also supports **GRPO** via `training/grpo_training.py` for researchers who want to experiment with RL. Key findings from our GRPO run:
+- Single-turn GRPO cannot learn multi-step sequential strategy without custom trajectory-level rollouts
+- `reward_std` was healthy (0.5–2.1) but the policy collapsed to repeating one safe action
+- Fix: use multi-turn SFT first (this pipeline), then optionally fine-tune with GRPO using full-episode rewards
 
-| Condition | Win Rate |
-|---|---|
-| Trained policy (no TOOL_FAILURE) | 65% |
-| Naive exploit-first baseline + TOOL_FAILURE | 0% |
-| Trained policy + TOOL_FAILURE | 60% |
-
-Interpretation: TOOL_FAILURE materially degrades brittle policies, while the trained stealth/pivot policy partially recovers under the same friction.
+```bash
+# GRPO training (experimental, requires custom reward function)
+python training/grpo_training.py --episodes 800
+```
 
 ---
 

@@ -1,0 +1,14 @@
+{
+  "heuristic": {
+    "win_rate": 0.88,
+    "avg_reward": 150.3352
+  },
+  "grpo": {
+    "tag": "GRPO",
+    "win_rate": 0.0,
+    "avg_reward": -33.557600000000015,
+    "avg_detection": 37.16,
+    "wins": 0,
+    "episodes": 50
+  }
+}

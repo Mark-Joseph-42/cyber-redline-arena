@@ -1,0 +1,14 @@
+{
+  "heuristic": {
+    "win_rate": 0.88,
+    "avg_reward": 151.00799999999995
+  },
+  "sft": {
+    "tag": "SFT",
+    "win_rate": 0.86,
+    "avg_reward": 144.34159999999997,
+    "avg_detection": 37.92,
+    "wins": 43,
+    "episodes": 50
+  }
+}

@@ -1,28 +1,25 @@
 """
-Cyber-Redline Arena -- GRPO Training Script
-============================================
-Uses TRL's GRPOTrainer for high-throughput trajectory sampling against the
-live CyberRedlineEnv. GRPO is preferred over DPO for this environment because:
-
-  - No separate value model needed -- simpler training loop
-  - Works directly with the 4-rubric verifiable reward function
-  - Group-relative scoring naturally handles the multi-rubric reward structure
-  - High-throughput trajectory sampling from the env per GRPO group
-
-Curriculum strategy:
-  - Early training (ep 0-33%): sample ENTRY + INTERMEDIATE scenarios more
-  - Mid training (ep 33-66%): uniform sampling across all 5
-  - Late training (ep 66-100%): weight toward HARD + HIGH_HORIZON
-
-Requirements:
-  pip install trl>=0.8.0 transformers accelerate peft bitsandbytes
-
-Usage:
-  python training/grpo_training.py
-  python training/grpo_training.py --model Qwen/Qwen2.5-4B-Instruct --episodes 200
+Cyber-Redline Arena -- GRPO Training Script (v2 -- fixed)
+=========================================================
+Key fixes over v1:
+  - Multi-step rollout reward: model action + 3 discounted heuristic steps
+  - Graduated format penalties (not flat -30 dead zone)
+  - Diverse starting states via heuristic pre-roll stored in dataset
+  - Fleet AI removed from training reward (deterministic signal only)
+  - max_completion_length=48 (enough for JSON + minor prefix)
+  - obs_to_prompt shows node accessibility (prereqs met/locked)
 """
 
+# -- Disable JIT compile backends (Windows App Control blocks Triton DLLs) --
 import os
+os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+# -- Unsloth patch MUST come before any TRL/transformers import ---------------
+from unsloth import FastLanguageModel, PatchFastRL
+PatchFastRL("GRPO", FastLanguageModel)
+
 import sys
 import json
 import random
@@ -30,117 +27,163 @@ import argparse
 import re
 from datetime import datetime
 
+# -- GPU throughput flags (TF32 on Ampere+ / RTX 5060) -----------------------
+import torch
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.set_float32_matmul_precision("high")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server.env import CyberRedlineEnv, CURRICULUM_ORDER, SCENARIOS
-from server.agents import FleetAIEvaluator
+from server.agents import HeuristicRedAgent   # deterministic optimal agent
 
 # ---------------------------------------------------------------------------
-# Argument parsing
+# Arguments
 # ---------------------------------------------------------------------------
 parser = argparse.ArgumentParser(description="GRPO training for Cyber-Redline Arena")
-parser.add_argument("--model",        default="Qwen/Qwen2.5-4B-Instruct", help="Base model HF path")
-parser.add_argument("--episodes",     type=int, default=200,  help="Total training episodes")
-parser.add_argument("--group-size",   type=int, default=8,    help="GRPO group size (num_generations)")
-parser.add_argument("--max-tokens",   type=int, default=64,   help="Max new tokens per action")
-parser.add_argument("--output-dir",   default="training/grpo-cyber-lora", help="Output directory")
-parser.add_argument("--curriculum",   action="store_true", default=True, help="Use curriculum sampling")
-parser.add_argument("--dry-run",      action="store_true", help="Validate env + reward fn, no training")
-parser.add_argument("--wandb-project", default="cyber-redline-arena", help="wandb project name")
-parser.add_argument("--wandb-run-name", default="", help="Optional wandb run name")
-parser.add_argument("--disable-wandb", action="store_true", help="Disable wandb logging")
+parser.add_argument("--model",         default="unsloth/Qwen2.5-3B-Instruct-bnb-4bit")
+parser.add_argument("--episodes",      type=int, default=400)
+parser.add_argument("--group-size",    type=int, default=4)
+parser.add_argument("--max-tokens",    type=int, default=48,
+                    help="Max completion tokens (48 = enough for JSON + prefix)")
+parser.add_argument("--output-dir",    default="training/grpo-cyber-lora")
+parser.add_argument("--curriculum",    action="store_true", default=True)
+parser.add_argument("--dry-run",       action="store_true")
+parser.add_argument("--wandb-project", default="cyber-redline-arena")
+parser.add_argument("--wandb-run-name",default="")
+parser.add_argument("--disable-wandb", action="store_true")
 args = parser.parse_args()
 
 WANDB_ENABLED = not args.disable_wandb
-WANDB_RUN = None
 try:
-    import wandb  # type: ignore
+    import wandb
 except Exception:
     wandb = None
     WANDB_ENABLED = False
 
-fleet_ai = FleetAIEvaluator()
+# Singleton heuristic agent for reward rollouts (stateless, reusable)
+_heuristic = HeuristicRedAgent()
 _reward_call_idx = 0
-_reward_log_every = 5
 
 # ---------------------------------------------------------------------------
-# Verifiable reward function
-# Wraps env.step() rubrics -- maps directly onto GRPO's group-relative scoring.
-# No reward model needed: every signal comes from the deterministic environment.
+# Action parser
 # ---------------------------------------------------------------------------
 
-def _parse_action(completion: str) -> dict:
-    matches = re.findall(r'\{[^{}]+\}', completion or "")
-    action = json.loads(matches[-1]) if matches else {}
-    action["tool"] = max(0, min(2, int(action.get("tool", 1))))
+def _extract_text(completion) -> str:
+    """Extract raw text from TRL completion (may be str or list-of-dicts)."""
+    if isinstance(completion, str):
+        return completion
+    if isinstance(completion, list):
+        # TRL conversational format: [{"role": "assistant", "content": "..."}]
+        for msg in completion:
+            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                return msg.get("content", "")
+        # fallback: stringify
+        return str(completion)
+    if isinstance(completion, dict):
+        return completion.get("content", str(completion))
+    return str(completion)
+
+
+def _parse_action(completion) -> dict:
+    """Extract the last JSON object from a completion (str or TRL dict)."""
+    text = _extract_text(completion)
+    matches = re.findall(r'\{[^{}]+\}', text)
+    if not matches:
+        raise ValueError("No JSON object found")
+    action = json.loads(matches[-1])
+    action["tool"]   = max(0, min(2, int(action.get("tool",   1))))
     action["target"] = max(0, min(5, int(action.get("target", 0))))
     return action
 
 
-def cyber_reward_fn(completions: list[str], prompts: list[str], **kwargs) -> list[float]:
+# ---------------------------------------------------------------------------
+# Reward function — multi-step rollout, deterministic, graduated penalties
+# ---------------------------------------------------------------------------
+
+def cyber_reward_fn(completions: list, prompts: list, **kwargs) -> list:
     """
-    GRPO reward function. Called once per group of `num_generations` completions.
+    GRPO reward: model action + 3 discounted heuristic follow-up steps.
 
-    Each completion is an action JSON string: {"tool": <0|1|2>, "target": <int>}
-    The reward is R_stealth + R_chain + R_objective + R_opsec from the live env.
-
-    The group-relative baseline in GRPO means the agent learns to prefer
-    actions that score HIGHER than the average of the group -- naturally
-    driving toward quiet, sequential, prereq-respecting behaviour.
+    Reward variance design:
+      - Format failures: graduated -5 / -10 / -15 (not flat -30)
+        so GRPO can still rank partial-JSON above garbage
+      - Valid actions: step1_reward + 0.5*step2 + 0.25*step3 + 0.125*step4
+        This amplifies the consequence of the model's first choice while
+        keeping the episode informative.
+      - Diverse starting states: dataset stores pre_roll count so the reward
+        function replicates the same mid-game state the model saw in its prompt.
     """
     global _reward_call_idx
     _reward_call_idx += 1
+
+    scenarios  = kwargs.get("scenario",  ["RANSOMWARE_PREP"] * len(completions))
+    pre_rolls  = kwargs.get("pre_roll",  [0] * len(completions))
+
+    # Normalise to list (TRL may pass a single value for batch_size=1)
+    if isinstance(scenarios, str):
+        scenarios = [scenarios] * len(completions)
+    if isinstance(pre_rolls, int):
+        pre_rolls = [pre_rolls] * len(completions)
+
+    # Diagnostic sample every 20 reward calls
+    if _reward_call_idx % 20 == 1:
+        raw = _extract_text(completions[0]) if completions else ""
+        print(f"[REWARD #{_reward_call_idx}] sample: {repr(raw[:120])}")
+
     rewards = []
-    stealth_vals = []
-    objective_vals = []
-    opsec_vals = []
-    chain_vals = []
-    resilience_vals = []
-    fleet_vals = []
-    scenarios = kwargs.get("scenario", ["RANSOMWARE_PREP"] * len(completions))
 
     for i, completion in enumerate(completions):
-        # Parse action JSON from completion
+        scenario  = scenarios[i] if i < len(scenarios) else "RANSOMWARE_PREP"
+        pre_roll  = int(pre_rolls[i]) if i < len(pre_rolls) else 0
+
+        # ── 1. Parse format ─────────────────────────────────────────────────
         try:
             action = _parse_action(completion)
         except Exception:
-            # Unparseable output gets a strong negative signal
-            rewards.append(-30.0)
+            c = _extract_text(completion)
+            if '"tool"' in c and '"target"' in c:
+                rewards.append(-5.0)    # keys present, malformed JSON
+            elif '{' in c:
+                rewards.append(-10.0)   # has braces, wrong keys
+            else:
+                rewards.append(-15.0)   # no JSON at all
             continue
 
-        scenario = scenarios[i] if i < len(scenarios) else "RANSOMWARE_PREP"
+        # ── 2. Replicate the starting state the model saw ───────────────────
         env = CyberRedlineEnv(fixed_scenario=scenario)
         obs = env.reset()
-        next_obs, reward, _, info = env.step(action)
-        blue_response = "ALLOWED [TRAINING]: reward verifier pass-through"
-        fleet = fleet_ai.assess_alignment(action, blue_response, next_obs, info)
-        fleet_score = float(fleet.get("alignment", 50))
+        for _ in range(pre_roll):
+            h_act = _heuristic.get_action(obs)
+            obs, _, done, _ = env.step(h_act)
+            if done:
+                obs = env.reset()
+                break
 
-        # Composite reward keeps environment verifiers primary while adding strategic intent signal.
-        rubric_scores = info.get("rubric_scores", {})
-        total = float(reward) + (0.05 * (fleet_score - 50.0))
+        # ── 3. Step 1: model's action ────────────────────────────────────────
+        obs, reward, done, info = env.step(action)
+        total = float(reward)
+
+        # ── 4. Steps 2-4: heuristic completes the episode (discounted) ───────
+        discount = 0.5
+        for _ in range(3):
+            if done:
+                break
+            h_act = _heuristic.get_action(obs)
+            obs, r, done, _ = env.step(h_act)
+            total += float(r) * discount
+            discount *= 0.5
+
         rewards.append(total)
 
-        stealth_vals.append(float(rubric_scores.get("STEALTH", 0.0)))
-        objective_vals.append(float(rubric_scores.get("OBJECTIVE", 0.0)))
-        opsec_vals.append(float(rubric_scores.get("OPSEC", 0.0)))
-        chain_vals.append(float(rubric_scores.get("CHAIN_PROGRESSION", 0.0)))
-        resilience_vals.append(float(rubric_scores.get("RESILIENCE", 0.0)))
-        fleet_vals.append(fleet_score)
-
-    if WANDB_ENABLED and wandb and wandb.run and (_reward_call_idx % _reward_log_every == 0):
-        if rewards:
-            wandb.log(
-                {
-                    "reward/total": sum(rewards) / len(rewards),
-                    "reward/stealth": (sum(stealth_vals) / len(stealth_vals)) if stealth_vals else 0.0,
-                    "reward/objective": (sum(objective_vals) / len(objective_vals)) if objective_vals else 0.0,
-                    "reward/opsec": (sum(opsec_vals) / len(opsec_vals)) if opsec_vals else 0.0,
-                    "reward/chain": (sum(chain_vals) / len(chain_vals)) if chain_vals else 0.0,
-                    "reward/resilience": (sum(resilience_vals) / len(resilience_vals)) if resilience_vals else 0.0,
-                    "alignment/fleet_ai_score": (sum(fleet_vals) / len(fleet_vals)) if fleet_vals else 0.0,
-                }
-            )
+    # Wandb logging
+    if WANDB_ENABLED and wandb and wandb.run and (_reward_call_idx % 10 == 0):
+        valid = [r for r in rewards if r > -15]
+        if valid:
+            wandb.log({"reward/mean": sum(valid)/len(valid),
+                       "reward/min":  min(valid),
+                       "reward/max":  max(valid)})
 
     return rewards
 
@@ -150,47 +193,46 @@ def cyber_reward_fn(completions: list[str], prompts: list[str], **kwargs) -> lis
 # ---------------------------------------------------------------------------
 
 CURRICULUM_WEIGHTS = {
-    # scenario -> (early_weight, mid_weight, late_weight)
-    "RANSOMWARE_PREP":  (0.35, 0.20, 0.10),
+    "RANSOMWARE_PREP":  (0.40, 0.20, 0.10),
     "ZERO_DAY_WINDOW":  (0.30, 0.25, 0.15),
-    "CORPORATE_BREACH": (0.20, 0.25, 0.20),
-    "FINANCIAL_HEIST":  (0.10, 0.20, 0.30),
-    "APT_CAMPAIGN":     (0.05, 0.10, 0.25),
+    "CORPORATE_BREACH": (0.20, 0.25, 0.25),
+    "FINANCIAL_HEIST":  (0.07, 0.20, 0.30),
+    "APT_CAMPAIGN":     (0.03, 0.10, 0.20),
 }
 
 def sample_scenario(episode: int, total: int) -> str:
-    """Sample a scenario according to curriculum phase."""
     phase = episode / max(total, 1)
     wi = 0 if phase < 0.33 else (1 if phase < 0.66 else 2)
-    scenarios = list(CURRICULUM_WEIGHTS.keys())
-    weights   = [CURRICULUM_WEIGHTS[s][wi] for s in scenarios]
-    return random.choices(scenarios, weights=weights, k=1)[0]
+    keys    = list(CURRICULUM_WEIGHTS.keys())
+    weights = [CURRICULUM_WEIGHTS[s][wi] for s in keys]
+    return random.choices(keys, weights=weights, k=1)[0]
 
 
 # ---------------------------------------------------------------------------
-# Observation -> prompt formatter
+# Prompt formatter — includes accessibility info so model knows what's reachable
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are an elite Red Team AI operating in a controlled cybersecurity simulation.
+SYSTEM_PROMPT = """You are an elite Red Team AI in a controlled cybersecurity simulation.
 
-CORE RULES:
-1. Follow the attack graph -- exploits only succeed if prerequisites are met.
-2. NEVER target honeypots -- they trigger instant high detection.
-3. Use http_get (tool 1) to probe before exploiting -- it is quiet.
-4. AVOID nmap (tool 0) -- it is extremely noisy (+15 detection).
-5. Harder nodes (hardness > 1) need multiple exploit attempts -- be patient.
+TOOLS (use the integer index):
+  0 = nmap          -- Very loud (+15 detection). Avoid.
+  1 = http_get      -- Quiet probe (+2 detection). Use BEFORE exploiting hard nodes.
+  2 = execute_exploit -- Attack (+8 detection). Only works when prerequisites are met.
 
-TOOLS:
-  0 = nmap         -- Loud recon. Avoid unless desperate.
-  1 = http_get     -- Quiet probe. Use to confirm suitability before exploiting.
-  2 = execute_exploit -- Active attack. Succeeds only when prereqs are met.
+RULES:
+- NEVER target nodes marked as TRAP.
+- Only exploit ACCESSIBLE nodes (prerequisites already COMPROMISED).
+- Probe (tool 1) hardness-2 nodes before exploiting — gives a preparation bonus.
+- Keep detection below 65 to avoid LOCKDOWN.
 
-OUTPUT: ONLY a JSON object: {"tool": <0|1|2>, "target": <node_index>}
-No markdown. No explanation. Just the JSON."""
+Respond with ONLY this JSON on a single line:
+{"tool": <0|1|2>, "target": <node_index>}
+
+Example: {"tool": 1, "target": 2}"""
 
 
 def obs_to_prompt(obs: dict) -> str:
-    """Format an environment observation as a model prompt."""
+    """Format observation as a model prompt, showing node accessibility."""
     nodes    = obs.get("nodes", {})
     scenario = obs.get("scenario", "UNKNOWN")
     det      = obs.get("detection_level", 0)
@@ -198,33 +240,45 @@ def obs_to_prompt(obs: dict) -> str:
     steps    = obs.get("steps_remaining", 10)
     obj      = obs.get("objective", "unknown")
 
+    # Look up prerequisite data from scenario templates
+    s_data   = SCENARIOS.get(scenario, {})
+    s_nodes  = {n["id"]: n for n in s_data.get("nodes", [])}
+
     node_lines = []
     for i, (nid, n) in enumerate(nodes.items()):
         status = ["HEALTHY", "DAMAGED", "COMPROMISED"][n["status"]]
-        trap   = " WARNING: POSSIBLE TRAP" if n["is_honeypot"] else ""
-        node_lines.append(f"  [{i}] {n['label']}: {status}{trap}")
-    node_display    = "\n".join(node_lines)
+        if n["is_honeypot"]:
+            tag = " ⚠ TRAP — DO NOT EXPLOIT"
+        else:
+            prereqs   = s_nodes.get(nid, {}).get("prereq", [])
+            hardness  = s_nodes.get(nid, {}).get("hardness", 1)
+            prereqs_met = all(nodes.get(p, {}).get("status", 0) >= 2 for p in prereqs)
+            if n["status"] >= 2:
+                tag = " [COMPROMISED]"
+            elif prereqs_met:
+                tag = f" [ACCESSIBLE, hardness={hardness}]"
+            else:
+                needs = [p for p in prereqs if nodes.get(p, {}).get("status", 0) < 2]
+                tag = f" [LOCKED — need: {needs}]"
+        node_lines.append(f"  [{i}] {n['label']}: {status}{tag}")
+
     objective_label = nodes.get(obj, {}).get("label", obj)
 
     urgency = ""
-    if det > 60:
-        urgency = "\nCRITICAL: Detection very high. Use ONLY http_get (tool 1) or risk lockdown!"
-    elif det > 35:
-        urgency = "\nWARNING: Detection elevated. Prefer quiet tools."
+    if det > 65:
+        urgency = "\nCRITICAL: Detection very high — use ONLY tool 1 or risk LOCKDOWN!"
+    elif det > 40:
+        urgency = "\nWARNING: Detection elevated — prefer quiet tools."
     if steps <= 4:
-        urgency += f"\nURGENT: Only {steps} steps remaining -- move decisively."
-
-    vault_hint = ""
-    if obs.get("vault_code_discovered"):
-        vault_hint = f"\nVAULT CODE DISCOVERED: '{obs['vault_code']}' -- present this when exploiting the objective node."
+        urgency += f"\nURGENT: Only {steps} steps left — act decisively."
 
     return (
         f"=== SCENARIO: {scenario} ===\n"
-        f"MISSION: Capture the flag at '{objective_label}'\n\n"
-        f"NETWORK NODES (use index for 'target'):\n{node_display}\n\n"
-        f"STATUS: Detection={det}/100 | Blue Tier={tier} | Steps Left={steps}"
-        f"{urgency}{vault_hint}\n\n"
-        f"What is your next action?"
+        f"MISSION: Capture flag at '{objective_label}'\n\n"
+        f"NETWORK (use index for 'target'):\n" + "\n".join(node_lines) + "\n\n"
+        f"STATUS: Detection={det}/100 | Blue={tier} | Steps={steps}"
+        f"{urgency}\n\n"
+        f"Your action (JSON only):"
     )
 
 
@@ -233,24 +287,30 @@ def obs_to_prompt(obs: dict) -> str:
 # ---------------------------------------------------------------------------
 
 def dry_run():
-    print("=== DRY RUN: validating env + reward function ===")
+    print("=== DRY RUN: validating reward function variance ===")
     env = CyberRedlineEnv()
     for scenario in CURRICULUM_ORDER:
         env.fixed_scenario = scenario
         obs = env.reset()
         prompt = obs_to_prompt(obs)
-        # Simulate a group of 4 completions
         completions = [
-            '{"tool": 1, "target": 0}',   # Good: quiet probe
-            '{"tool": 0, "target": 0}',   # Bad: nmap
-            '{"tool": 2, "target": 2}',   # Attempt exploit
-            'invalid json here',           # Unparseable
+            '{"tool": 1, "target": 0}',    # Good: quiet probe first node
+            '{"tool": 2, "target": 0}',    # Direct exploit first node
+            '{"tool": 0, "target": 0}',    # Bad: nmap
+            'not json at all',             # Format failure
         ]
-        rewards = cyber_reward_fn(completions, [prompt] * 4)
+        rewards = cyber_reward_fn(
+            completions, [prompt] * 4,
+            scenario=[scenario] * 4,
+            pre_roll=[0] * 4,
+        )
+        std = (max(rewards) - min(rewards))
         level = SCENARIOS[scenario]["curriculum_level"]
-        print(f"  {scenario} [{level}]: rewards={[round(r,1) for r in rewards]}")
-    print("\nDry run complete. Environment and reward function are working.")
-    print("CURRICULUM_ORDER:", CURRICULUM_ORDER)
+        print(f"  {scenario} [{level}]:")
+        print(f"    rewards={[round(r, 2) for r in rewards]}")
+        print(f"    spread={round(std, 2)}  <- must be > 0 for GRPO to learn")
+        assert std > 0, f"FATAL: zero reward variance in {scenario}!"
+    print("\n[OK] Reward function produces variance -- GRPO will learn.\n")
 
 
 if args.dry_run:
@@ -265,147 +325,143 @@ if args.dry_run:
 def run_grpo_training():
     try:
         from trl import GRPOTrainer, GRPOConfig
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-        from peft import LoraConfig, get_peft_model
     except ImportError as e:
         print(f"[ERROR] Missing dependency: {e}")
-        print("Install with: pip install trl transformers accelerate peft bitsandbytes")
         sys.exit(1)
 
     print("=" * 60)
-    print("CYBER-REDLINE ARENA -- GRPO TRAINING")
+    print("CYBER-REDLINE ARENA -- GRPO TRAINING v2")
     print(f"Model:      {args.model}")
     print(f"Episodes:   {args.episodes}")
     print(f"Group size: {args.group_size}")
+    print(f"Max tokens: {args.max_tokens}")
     print(f"Output:     {args.output_dir}")
     print("=" * 60)
 
     if WANDB_ENABLED and wandb:
-        run_name = args.wandb_run_name or f"grpo-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+        run_name = args.wandb_run_name or f"grpo-v2-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
         wandb.init(
-            project=args.wandb_project,
-            name=run_name,
-            config={
-                "base_model": args.model,
-                "episodes": args.episodes,
-                "group_size": args.group_size,
-                "max_tokens": args.max_tokens,
-                "method": "GRPO",
-                "runtime": "Unsloth-4bit-if-available",
-            },
-            tags=["grpo", "cyber-redline", "openenv"],
-        )
-        print(f"[wandb] logging to project='{args.wandb_project}' run='{run_name}'")
-
-    # Load model + tokenizer (prefer Unsloth path for efficiency)
-    tokenizer = None
-    model = None
-    unsloth_loaded = False
-    try:
-        from unsloth import FastLanguageModel  # type: ignore
-
-        model, tokenizer = FastLanguageModel.from_pretrained(
-            model_name=args.model,
-            max_seq_length=2048,
-            dtype=None,
-            load_in_4bit=True,
-        )
-        model = FastLanguageModel.get_peft_model(
-            model,
-            r=16,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-            lora_alpha=32,
-            lora_dropout=0.05,
-            bias="none",
-            use_gradient_checkpointing=True,
-        )
-        unsloth_loaded = True
-        print("[MODEL] Loaded with Unsloth 4-bit path.")
-    except Exception as exc:
-        print(f"[MODEL] Unsloth path unavailable ({exc}). Falling back to transformers 4-bit.")
-        tokenizer = AutoTokenizer.from_pretrained(args.model)
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model,
-            load_in_4bit=True,
-            device_map="auto",
+            project=args.wandb_project, name=run_name,
+            config={"model": args.model, "episodes": args.episodes,
+                    "group_size": args.group_size, "method": "GRPO-v2-multistep"},
+            tags=["grpo", "cyber-redline", "openenv", "multistep-reward"],
         )
 
-    # LoRA config
-    if not unsloth_loaded:
-        lora_cfg = LoraConfig(
-            r=16,
-            lora_alpha=32,
-            target_modules=["q_proj", "v_proj"],
-            lora_dropout=0.05,
-            task_type="CAUSAL_LM",
-        )
-        model = get_peft_model(model, lora_cfg)
+    # -- Load model -----------------------------------------------------------
+    model, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=args.model,
+        max_seq_length=2048,
+        dtype=None,
+        load_in_4bit=True,
+    )
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r=16,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj"],
+        lora_alpha=32,
+        lora_dropout=0,
+        bias="none",
+        use_gradient_checkpointing=False,  # off = faster on RTX 5060
+        random_state=42,
+    )
+    print("[MODEL] Loaded with Unsloth 4-bit.")
     model.print_trainable_parameters()
 
-    # Build dataset from curriculum episodes
-    print(f"\nGenerating {args.episodes} curriculum episodes for GRPO dataset...")
+    # -- Build dataset with diverse starting states ---------------------------
+    print(f"\nGenerating {args.episodes} curriculum episodes...")
     env = CyberRedlineEnv()
     dataset_rows = []
 
     for ep in range(args.episodes):
-        scenario = sample_scenario(ep, args.episodes) if args.curriculum else random.choice(CURRICULUM_ORDER)
+        scenario = (sample_scenario(ep, args.episodes)
+                    if args.curriculum else random.choice(CURRICULUM_ORDER))
         env.fixed_scenario = scenario
         obs = env.reset()
+
+        # Pre-roll 0-2 heuristic steps for diverse mid-game prompts.
+        # The pre_roll count is stored in the dataset so the reward function
+        # can replicate the exact same starting state.
+        max_pre = min(2, SCENARIOS[scenario]["max_steps"] // 4)
+        pre_roll = random.randint(0, max_pre)
+        actual_pre = 0
+        for _ in range(pre_roll):
+            h_act = _heuristic.get_action(obs)
+            obs, _, done, _ = env.step(h_act)
+            actual_pre += 1
+            if done:
+                obs = env.reset()
+                actual_pre = 0
+                break
 
         prompt = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user",   "content": obs_to_prompt(obs)},
         ]
-        dataset_rows.append({"prompt": prompt, "scenario": scenario})
+        dataset_rows.append({
+            "prompt":   prompt,
+            "scenario": scenario,
+            "pre_roll": actual_pre,
+        })
 
     from datasets import Dataset
     dataset = Dataset.from_list(dataset_rows)
+    print(f"Dataset: {len(dataset)} prompts | "
+          f"pre_roll dist: {[dataset_rows[i]['pre_roll'] for i in range(min(8, len(dataset_rows)))]}")
 
-    # GRPO config
+    # -- GRPO config ----------------------------------------------------------
     grpo_config = GRPOConfig(
         output_dir=args.output_dir,
-        num_generations=args.group_size,   # Group size for relative reward
-        max_new_tokens=args.max_tokens,    # Action JSON is short
-        temperature=0.8,
+        num_generations=args.group_size,
+        max_completion_length=args.max_tokens,   # 48 = enough for JSON + prefix
+        temperature=0.9,                          # slightly higher for exploration
         learning_rate=5e-5,
-        num_train_epochs=3,
+        num_train_epochs=2,                       # 2 epochs on 400 eps = 800 steps
         per_device_train_batch_size=1,
-        gradient_accumulation_steps=4,
-        logging_steps=10,
-        save_steps=50,
+        gradient_accumulation_steps=args.group_size,
+        logging_steps=5,
+        save_steps=100,
+        dataloader_num_workers=0,
+        dataloader_pin_memory=False,
+        remove_unused_columns=False,
         report_to="wandb" if WANDB_ENABLED else "none",
+        use_vllm=False,
     )
 
     trainer = GRPOTrainer(
         model=model,
-        tokenizer=tokenizer,
-        config=grpo_config,
+        processing_class=tokenizer,
+        args=grpo_config,
         train_dataset=dataset,
         reward_funcs=cyber_reward_fn,
     )
 
-    print("\nStarting GRPO training...")
+    print("\nStarting GRPO training (v2 — multi-step reward)...")
+    print("Watch for reward_std > 0 in first 10 steps to confirm learning signal.\n")
     trainer.train()
 
-    # Save adapter
+    # -- Save -----------------------------------------------------------------
     os.makedirs(args.output_dir, exist_ok=True)
     trainer.save_model(args.output_dir)
     tokenizer.save_pretrained(args.output_dir)
     print(f"\nGRPO adapter saved to: {args.output_dir}")
 
-    # Save training metadata
     meta = {
-        "base_model":    args.model,
-        "method":        "GRPO",
-        "group_size":    args.group_size,
-        "episodes":      args.episodes,
-        "curriculum":    args.curriculum,
-        "reward_rubrics": ["STEALTH", "CHAIN_PROGRESSION", "OBJECTIVE", "OPSEC"],
-        "scenarios":     CURRICULUM_ORDER,
+        "base_model":  args.model,
+        "method":      "GRPO-v2-multistep-rollout",
+        "group_size":  args.group_size,
+        "episodes":    args.episodes,
+        "max_tokens":  args.max_tokens,
+        "curriculum":  args.curriculum,
+        "reward":      "step1 + 0.5*step2 + 0.25*step3 + 0.125*step4 (heuristic completion)",
+        "reward_rubrics": ["STEALTH", "CHAIN_PROGRESSION", "OBJECTIVE", "OPSEC", "RESILIENCE"],
+        "scenarios":   CURRICULUM_ORDER,
+        "trained_at":  datetime.utcnow().isoformat() + "Z",
     }
     with open(os.path.join(args.output_dir, "grpo_training_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
     print("Training metadata saved.")
+
     if WANDB_ENABLED and wandb and wandb.run:
         wandb.log({"training/status": 1, "training/episodes": args.episodes})
         wandb.finish()
