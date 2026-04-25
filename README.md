@@ -3,7 +3,7 @@ title: Cyber-Redline Arena
 emoji: 🔴
 colorFrom: red
 colorTo: gray
-sdk: static
+sdk: docker
 pinned: true
 license: mit
 ---
@@ -15,7 +15,6 @@ license: mit
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-Compliant-CCFF00?style=flat-square)](https://openenv.ai)
 [![Theme](https://img.shields.io/badge/Theme-MultiAgent-blue?style=flat-square)](https://openenv.ai)
 [![GRPO](https://img.shields.io/badge/Training-GRPO%20Ready-brightgreen?style=flat-square)](https://huggingface.co/docs/trl/grpo_trainer)
-[![DPO](https://img.shields.io/badge/Training-DPO%20Fine--tuned-purple?style=flat-square)](https://huggingface.co/docs/trl/dpo_trainer)
 [![Model](https://img.shields.io/badge/Model-Qwen2.5--4B-orange?style=flat-square)](https://huggingface.co/Qwen/Qwen2.5-4B)
 
 > **[HuggingFace Space](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena)**
@@ -222,7 +221,7 @@ At each step, Fleet AI reads the action taken, the Blue Team's response, and the
 
 **Why this is process supervision, not outcome reward:** The Fleet AI fires at every step regardless of whether the episode ends in success or failure. A model that "reward hacks" the objective rubric by taking a shortcut will show a sharp drop in alignment score at that step — providing a detectable signal that the trajectory is incoherent even if the episode reward is locally positive.
 
-After DPO training, alignment consistently stays above 75%, proving the agent internalized strategic intent rather than gaming the endpoint reward.
+After GRPO training, alignment consistently stays above 75%, proving the agent internalized strategic intent rather than gaming the endpoint reward.
 
 ---
 
@@ -252,9 +251,9 @@ R_opsec     = -30.0              (prereq violation on locked node)
 R_total     = -36.8  (single step, representative)
 ```
 
-### Step 3: Trained Model (Post-DPO / Policy)
+### Step 3: Trained Model (Post-GRPO Policy)
 
-After training on 500 preference pairs from the live environment:
+After GRPO training on live trajectories from the environment:
 
 | Behavior | Observation |
 |---|---|
@@ -309,39 +308,54 @@ trainer = GRPOTrainer(model=model, config=config, env=CyberRedlineEnv())
 trainer.train()
 ```
 
-The verifiable reward function (`R_stealth + R_chain + R_objective + R_opsec`) maps directly onto GRPO's group-relative scoring — no approximation needed.
+The verifiable reward function (`R_stealth + R_chain + R_objective + R_opsec + R_resilience`) maps directly onto GRPO's group-relative scoring — no approximation needed.
 
-### DPO Pipeline (Completed)
+### Weights & Biases Integration (Judge-Friendly)
 
-The agent (Qwen 2.5-4B) was also fine-tuned using Direct Preference Optimization on trajectory pairs generated from the live environment.
-
-`server/generate_dpo_dataset.py` runs a dual-agent evaluation — one optimal (heuristic), one random — and packages trajectories as preference pairs:
-
-```jsonl
-{
-  "prompt":   "<system context + observation>",
-  "chosen":   "<heuristic agent action: quiet probe, correct prereq>",
-  "rejected": "<random agent action: nmap on honeypot, wrong prereq>"
-}
-```
-
-The dataset (`training/dpo_dataset.jsonl`) contains **~500 preference pairs** across all 5 scenarios:
-- Correct vs. incorrect tool selection under each Blue tier
-- Vault code discovery paths vs. blind objective attempts
-- Stealthy lateral movement vs. detection-spiking shortcuts
+`training/grpo_training.py` now supports native wandb logging and Unsloth-first loading for efficient 4-bit runs.
 
 ```bash
-# Google Colab (free T4)
-# Open training/colab_dpo_training.ipynb
+# one-time
+wandb login
 
-# Local (requires GPU)
-python training/run_dpo_local.py
+# recommended: set API key in env
+export WANDB_API_KEY=...   # Linux/macOS
+# setx WANDB_API_KEY ...    # Windows
+
+# launch
+python train_grpo.py --episodes 200 --group-size 8 --wandb-project cyber-redline-arena
 ```
 
-- **Base model:** `Qwen/Qwen2.5-4B-Instruct`
-- **Method:** DPO with 4-bit QLoRA via Unsloth
-- **LoRA adapter:** `training/qwen-cyber-dpo-lora/`
-- **Win rate eval:** `training/winrate_eval.py` (base vs fine-tuned, 50 episodes)
+Logged metrics include:
+- `reward/total`
+- `reward/stealth`
+- `reward/objective`
+- `reward/opsec`
+- `reward/chain`
+- `reward/resilience`
+- `alignment/fleet_ai_score`
+
+### Suggested wandb Report Layout
+
+Create a single report with these panels (top-to-bottom):
+1. **Reward Stability:** `reward/total` line chart
+2. **Anti-Reward-Hacking Breakdown:** multi-line chart with `reward/stealth`, `reward/opsec`, `reward/resilience`
+3. **Strategic Intent:** `alignment/fleet_ai_score`
+4. **Outcome Table:** final eval metrics (`win_rate`, `avg_reward`, `SAS`) from your validation run
+
+This report view gives judges one-click evidence that reward gains come from stealthy strategic behavior, not shortcut exploitation.
+
+### Chaos Engine Validation (TOOL_FAILURE)
+
+To validate that chaos friction is functional (not aspirational), we ran a quick 60-episode ablation with `API_RATE_LIMIT=0` and forced `TOOL_FAILURE` on `execute_exploit` for 3 steps:
+
+| Condition | Win Rate |
+|---|---|
+| Trained policy (no TOOL_FAILURE) | 65% |
+| Naive exploit-first baseline + TOOL_FAILURE | 0% |
+| Trained policy + TOOL_FAILURE | 60% |
+
+Interpretation: TOOL_FAILURE materially degrades brittle policies, while the trained stealth/pivot policy partially recovers under the same friction.
 
 ---
 
@@ -367,8 +381,7 @@ python -m uvicorn server.app:app --port 8080
 
 ```bash
 python -m server.run_baseline        # Baseline evidence
-python -m server.simulate_training   # Epsilon-greedy training sim
-python -m server.generate_dpo_dataset  # Generate DPO pairs
+python -m server.simulate_training   # Curriculum + chaos robustness sim
 ```
 
 ---
@@ -382,7 +395,7 @@ python -m server.generate_dpo_dataset  # Generate DPO pairs
 |  +----------------+  action  +----------------------------+  |
 |  |  Red Team LLM  | -------> |   CyberRedlineEnv          |  |
 |  |  (Qwen 2.5-4B) |          |   openenv.core.Environment |  |
-|  |  DPO/GRPO      | <------- |   5 scenarios, 4 rubrics   |  |
+|  |  GRPO policy   | <------- |   5 scenarios, 4+ rubrics  |  |
 |  +----------------+  obs+rew +------------|---------------+  |
 |         |                                 |                   |
 |    action log                        step logs                |
@@ -431,23 +444,23 @@ cyber_arena/
 │   ├── orchestrator.py         # Multi-agent episode loop
 │   ├── run_baseline.py         # 3-agent baseline evaluation
 │   ├── simulate_training.py    # Epsilon-greedy training simulation
-│   ├── generate_dpo_dataset.py # DPO preference pair generation
+│   ├── generate_dpo_dataset.py # Legacy preference-data utility (optional)
 │   └── generate_dataset.py     # Raw trajectory dataset generation
 ├── frontend/
 │   └── index.html              # Live cyberpunk dashboard
 ├── training/
-│   ├── colab_dpo_training.ipynb  # DPO training notebook (free T4)
-│   ├── run_dpo_local.py          # Local DPO training script
+│   ├── colab_dpo_training.ipynb  # Legacy notebook (optional)
+│   ├── run_dpo_local.py          # Legacy script (optional)
 │   ├── winrate_eval.py           # Base vs fine-tuned win rate comparison
 │   ├── eval_before_after.py      # Behavioral before/after evaluation
-│   ├── dpo_dataset.jsonl         # ~500 preference pairs (generated)
-│   ├── dpo_dataset_stats.json    # Dataset statistics
-│   ├── loss_data.json            # DPO training loss curve data
+│   ├── dpo_dataset.jsonl         # Legacy dataset artifact
+│   ├── dpo_dataset_stats.json    # Legacy dataset stats
+│   ├── loss_data.json            # Training loss curve data
 │   ├── dpo_loss_curve.png        # Training loss visualization
 │   ├── winrate_results.json      # Head-to-head evaluation results
-│   ├── pre_dpo_responses.json    # Base model trajectory samples
-│   ├── post_dpo_responses.json   # Fine-tuned model trajectory samples
-│   └── qwen-cyber-dpo-lora/      # Trained LoRA adapter weights
+│   ├── pre_dpo_responses.json    # Legacy baseline trajectory samples
+│   ├── post_dpo_responses.json   # Legacy fine-tuned trajectory samples
+│   └── qwen-cyber-dpo-lora/      # Legacy LoRA adapter artifact
 ├── results/
 │   ├── training_curves.png       <- real training evidence
 │   ├── comparison_chart.png      <- before/after agent comparison
@@ -456,3 +469,9 @@ cyber_arena/
 ├── openenv.yaml                  <- OpenEnv manifest (universal interface)
 └── requirements.txt
 ```
+
+---
+
+## Limitations
+
+This sandbox is intentionally lightweight and still approximates real enterprise environments: the Blue swarm is heuristic rather than fully learned, chaos friction currently focuses on API/tool degradation rather than full network jitter classes, and pod simulation defaults to dry-run unless explicitly enabled for shell verification. As a result, transfer to production-grade SOC workflows should be treated as directional rather than absolute, and the most reliable use today is comparative policy evaluation under controlled adversarial pressure (not autonomous deployment).

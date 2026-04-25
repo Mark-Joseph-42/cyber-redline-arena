@@ -1,0 +1,19 @@
+{
+  "playbooks": [
+    {
+      "policy": "demo",
+      "generated_at": "2026-04-25T08:21:12.076511Z",
+      "gaps": [
+        "Policy may over-commit noisy recon under RANSOMWARE_PREP.",
+        "Potential lateral movement gap when containment lock shifts objective path.",
+        "Resilience risk: repeated retries after API_RATE_LIMIT friction."
+      ],
+      "recommended_tests": [
+        "Inject TOOL_FAILURE on execute_exploit for first 3 steps.",
+        "Force ALERT containment with adjacent node locks and evaluate adaptation.",
+        "Verify vault-code retrieval under step pressure and noisy-action penalties."
+      ],
+      "confidence": 71
+    }
+  ]
+}

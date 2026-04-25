@@ -27,10 +27,13 @@ import sys
 import json
 import random
 import argparse
+import re
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from server.env import CyberRedlineEnv, CURRICULUM_ORDER, SCENARIOS
+from server.agents import FleetAIEvaluator
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -43,14 +46,36 @@ parser.add_argument("--max-tokens",   type=int, default=64,   help="Max new toke
 parser.add_argument("--output-dir",   default="training/grpo-cyber-lora", help="Output directory")
 parser.add_argument("--curriculum",   action="store_true", default=True, help="Use curriculum sampling")
 parser.add_argument("--dry-run",      action="store_true", help="Validate env + reward fn, no training")
+parser.add_argument("--wandb-project", default="cyber-redline-arena", help="wandb project name")
+parser.add_argument("--wandb-run-name", default="", help="Optional wandb run name")
+parser.add_argument("--disable-wandb", action="store_true", help="Disable wandb logging")
 args = parser.parse_args()
 
+WANDB_ENABLED = not args.disable_wandb
+WANDB_RUN = None
+try:
+    import wandb  # type: ignore
+except Exception:
+    wandb = None
+    WANDB_ENABLED = False
+
+fleet_ai = FleetAIEvaluator()
+_reward_call_idx = 0
+_reward_log_every = 5
 
 # ---------------------------------------------------------------------------
 # Verifiable reward function
 # Wraps env.step() rubrics -- maps directly onto GRPO's group-relative scoring.
 # No reward model needed: every signal comes from the deterministic environment.
 # ---------------------------------------------------------------------------
+
+def _parse_action(completion: str) -> dict:
+    matches = re.findall(r'\{[^{}]+\}', completion or "")
+    action = json.loads(matches[-1]) if matches else {}
+    action["tool"] = max(0, min(2, int(action.get("tool", 1))))
+    action["target"] = max(0, min(5, int(action.get("target", 0))))
+    return action
+
 
 def cyber_reward_fn(completions: list[str], prompts: list[str], **kwargs) -> list[float]:
     """
@@ -63,30 +88,59 @@ def cyber_reward_fn(completions: list[str], prompts: list[str], **kwargs) -> lis
     actions that score HIGHER than the average of the group -- naturally
     driving toward quiet, sequential, prereq-respecting behaviour.
     """
-    import json, re
+    global _reward_call_idx
+    _reward_call_idx += 1
     rewards = []
+    stealth_vals = []
+    objective_vals = []
+    opsec_vals = []
+    chain_vals = []
+    resilience_vals = []
+    fleet_vals = []
+    scenarios = kwargs.get("scenario", ["RANSOMWARE_PREP"] * len(completions))
 
-    # Shared env per batch -- reset handled externally per episode
-    env = CyberRedlineEnv()
-    env.reset()
-
-    for completion in completions:
+    for i, completion in enumerate(completions):
         # Parse action JSON from completion
         try:
-            matches = re.findall(r'\{[^{}]+\}', completion)
-            action = json.loads(matches[-1]) if matches else {}
-            action["tool"]   = max(0, min(2, int(action.get("tool",   1))))
-            action["target"] = max(0, min(5, int(action.get("target", 0))))
+            action = _parse_action(completion)
         except Exception:
             # Unparseable output gets a strong negative signal
             rewards.append(-30.0)
             continue
 
-        _, reward, _, info = env.step(action)
+        scenario = scenarios[i] if i < len(scenarios) else "RANSOMWARE_PREP"
+        env = CyberRedlineEnv(fixed_scenario=scenario)
+        obs = env.reset()
+        next_obs, reward, _, info = env.step(action)
+        blue_response = "ALLOWED [TRAINING]: reward verifier pass-through"
+        fleet = fleet_ai.assess_alignment(action, blue_response, next_obs, info)
+        fleet_score = float(fleet.get("alignment", 50))
 
-        # Include rubric breakdown in the reward for logging
+        # Composite reward keeps environment verifiers primary while adding strategic intent signal.
         rubric_scores = info.get("rubric_scores", {})
-        rewards.append(float(reward))
+        total = float(reward) + (0.05 * (fleet_score - 50.0))
+        rewards.append(total)
+
+        stealth_vals.append(float(rubric_scores.get("STEALTH", 0.0)))
+        objective_vals.append(float(rubric_scores.get("OBJECTIVE", 0.0)))
+        opsec_vals.append(float(rubric_scores.get("OPSEC", 0.0)))
+        chain_vals.append(float(rubric_scores.get("CHAIN_PROGRESSION", 0.0)))
+        resilience_vals.append(float(rubric_scores.get("RESILIENCE", 0.0)))
+        fleet_vals.append(fleet_score)
+
+    if WANDB_ENABLED and wandb and wandb.run and (_reward_call_idx % _reward_log_every == 0):
+        if rewards:
+            wandb.log(
+                {
+                    "reward/total": sum(rewards) / len(rewards),
+                    "reward/stealth": (sum(stealth_vals) / len(stealth_vals)) if stealth_vals else 0.0,
+                    "reward/objective": (sum(objective_vals) / len(objective_vals)) if objective_vals else 0.0,
+                    "reward/opsec": (sum(opsec_vals) / len(opsec_vals)) if opsec_vals else 0.0,
+                    "reward/chain": (sum(chain_vals) / len(chain_vals)) if chain_vals else 0.0,
+                    "reward/resilience": (sum(resilience_vals) / len(resilience_vals)) if resilience_vals else 0.0,
+                    "alignment/fleet_ai_score": (sum(fleet_vals) / len(fleet_vals)) if fleet_vals else 0.0,
+                }
+            )
 
     return rewards
 
@@ -226,23 +280,66 @@ def run_grpo_training():
     print(f"Output:     {args.output_dir}")
     print("=" * 60)
 
-    # Load model + tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
-    model     = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        load_in_4bit=True,
-        device_map="auto",
-    )
+    if WANDB_ENABLED and wandb:
+        run_name = args.wandb_run_name or f"grpo-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+        wandb.init(
+            project=args.wandb_project,
+            name=run_name,
+            config={
+                "base_model": args.model,
+                "episodes": args.episodes,
+                "group_size": args.group_size,
+                "max_tokens": args.max_tokens,
+                "method": "GRPO",
+                "runtime": "Unsloth-4bit-if-available",
+            },
+            tags=["grpo", "cyber-redline", "openenv"],
+        )
+        print(f"[wandb] logging to project='{args.wandb_project}' run='{run_name}'")
+
+    # Load model + tokenizer (prefer Unsloth path for efficiency)
+    tokenizer = None
+    model = None
+    unsloth_loaded = False
+    try:
+        from unsloth import FastLanguageModel  # type: ignore
+
+        model, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=args.model,
+            max_seq_length=2048,
+            dtype=None,
+            load_in_4bit=True,
+        )
+        model = FastLanguageModel.get_peft_model(
+            model,
+            r=16,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            lora_alpha=32,
+            lora_dropout=0.05,
+            bias="none",
+            use_gradient_checkpointing=True,
+        )
+        unsloth_loaded = True
+        print("[MODEL] Loaded with Unsloth 4-bit path.")
+    except Exception as exc:
+        print(f"[MODEL] Unsloth path unavailable ({exc}). Falling back to transformers 4-bit.")
+        tokenizer = AutoTokenizer.from_pretrained(args.model)
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model,
+            load_in_4bit=True,
+            device_map="auto",
+        )
 
     # LoRA config
-    lora_cfg = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        target_modules=["q_proj", "v_proj"],
-        lora_dropout=0.05,
-        task_type="CAUSAL_LM",
-    )
-    model = get_peft_model(model, lora_cfg)
+    if not unsloth_loaded:
+        lora_cfg = LoraConfig(
+            r=16,
+            lora_alpha=32,
+            target_modules=["q_proj", "v_proj"],
+            lora_dropout=0.05,
+            task_type="CAUSAL_LM",
+        )
+        model = get_peft_model(model, lora_cfg)
     model.print_trainable_parameters()
 
     # Build dataset from curriculum episodes
@@ -276,7 +373,7 @@ def run_grpo_training():
         gradient_accumulation_steps=4,
         logging_steps=10,
         save_steps=50,
-        report_to="none",
+        report_to="wandb" if WANDB_ENABLED else "none",
     )
 
     trainer = GRPOTrainer(
@@ -309,6 +406,9 @@ def run_grpo_training():
     with open(os.path.join(args.output_dir, "grpo_training_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
     print("Training metadata saved.")
+    if WANDB_ENABLED and wandb and wandb.run:
+        wandb.log({"training/status": 1, "training/episodes": args.episodes})
+        wandb.finish()
 
 
 if __name__ == "__main__":

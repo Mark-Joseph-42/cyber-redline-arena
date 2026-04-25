@@ -383,6 +383,7 @@
             trace: [], // Indices of compromised nodes in order
             scenario: "STANDBY"
         };
+        let autoDemoStarted = false;
 
         // --- CANVAS UTILS ---
         const dpr = window.devicePixelRatio || 1;
@@ -735,6 +736,16 @@
             step();
         };
 
+        async function autoStartDemoSession() {
+            if (autoDemoStarted || state.running) return;
+            autoDemoStarted = true;
+            state.mode = 'demo';
+            document.getElementById('mode-demo').classList.add('active');
+            document.getElementById('mode-llm').classList.remove('active');
+            updateTerminal('[AUTO-DEMO] Starting trained stealth policy run...', COLORS.secondary);
+            await document.getElementById('btn-start').onclick();
+        }
+
         document.getElementById('btn-reset').onclick = async () => {
             state.running = false;
             const data = await API.reset();
@@ -818,6 +829,11 @@
                     document.getElementById('playbook-preview').textContent = `Playbook: ${firstGap}`;
                 }
             } catch (_) {}
+            // HF demo behavior: auto-run one episode on first page load.
+            // This showcases live reward, tier escalation, and stealth action selection immediately.
+            setTimeout(() => {
+                autoStartDemoSession().catch(() => {});
+            }, 700);
         };
 
         // Resize handler

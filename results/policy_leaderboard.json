@@ -1,0 +1,15 @@
+{
+  "entries": {
+    "demo": {
+      "mode": "demo",
+      "runs": 1,
+      "total_reward": 0.0,
+      "sas_sum": 0.0,
+      "autonomy_sum": 0.0,
+      "last_updated": "2026-04-25T08:21:12.069768Z",
+      "avg_reward": 0.0,
+      "avg_sas": 0.0,
+      "avg_autonomy_escalation": 0.0
+    }
+  }
+}
