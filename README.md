@@ -50,6 +50,46 @@ An OpenEnv-compliant, Gymnasium-style multi-agent environment where three agents
 
 ---
 
+## Agentic Safety Sandbox (v4)
+
+The environment now supports an agentic safety and emergent-risk sandbox layer on top of the core OpenEnv loop (`reset/step/state`):
+
+1. **Chaos Engine (Adversarial Robustness)**
+   - Episode-level `chaos_vector` in `server/env.py`
+   - `API_RATE_LIMIT` friction (`429` simulation)
+   - `TOOL_FAILURE` degradation for a randomized tool over 3 steps
+   - `R_resilience` shaping: penalize hammering failed tools, reward tactical pivots
+
+2. **Blue-Team Swarm Coordination**
+   - `MonitorAgent` and `ContainmentAgent` inside `server/agents.py`
+   - Fleet-style orchestration chain that can emit dynamic lock directives
+   - Environment-level lock enforcement via `apply_blue_directives()`
+
+3. **Red-Teaming Playbook Generator**
+   - `AttackPlaybookGenerator` secondary loop for pre-deployment policy stress tests
+   - API endpoints:
+     - `POST /generate_playbook?policy=llm|demo`
+     - `GET /playbooks`
+   - Human-reviewable playbooks persisted in `results/attack_playbooks.json`
+
+4. **Real-Infrastructure Simulation Layer**
+   - Lightweight pod simulation in `server/pod_manager.py`
+   - Node compromise updates pod/container states
+   - Optional shell verification mode (`CYBER_POD_MODE=shell-verify`) for local exploit command checks
+
+5. **Strategic Metrics & Live Benchmarking**
+   - MITRE ATT&CK mapping returned from `step()` through `info["mitre_attack"]`
+   - Emergent-risk telemetry:
+     - `autonomy_escalation`
+     - `success_at_stealth (SAS)`
+   - Live policy leaderboard endpoint:
+     - `GET /leaderboard`
+   - Persistent leaderboard storage in `results/policy_leaderboard.json`
+
+All chaos and safety signals are appended into Fleet reasoning traces for explainability.
+
+---
+
 ## The Protected Vault
 
 The data Red Team is trying to steal is isolated in `server/vault.py` — completely separate from game mechanics. Each scenario has a concrete data payload with a classification label, record count, and field schema.
