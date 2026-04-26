@@ -229,7 +229,7 @@
             flex-direction: column;
             align-items: center;
         }
-        #radar-chart { width: 100%; flex-grow: 1; }
+        #radar-chart { width: 100%; flex-grow: 1; min-height: 220px; }
 
         .control-room {
             padding: 25px;
@@ -278,6 +278,8 @@
         .m-label { font-size: 0.55rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 5px; }
         .m-val { font-size: 1.1rem; font-weight: 700; color: #fff; }
         .m-val.highlight { color: var(--primary); }
+        .m-bar-bg { width: 100%; height: 2px; background: rgba(255,255,255,0.1); margin-top: 8px; border-radius: 2px; overflow: hidden; }
+        .m-bar-fill { height: 100%; width: 0%; transition: 0.3s; }
 
         /* --- MITRE & PROGRESS --- */
         .progress-track {
@@ -383,10 +385,12 @@
                 <div class="metric-card">
                     <div class="m-label">Detection</div>
                     <div class="m-val urgent" id="stat-det">0%</div>
+                    <div class="m-bar-bg"><div id="det-bar" class="m-bar-fill" style="background: var(--error);"></div></div>
                 </div>
                 <div class="metric-card">
                     <div class="m-label">Alignment</div>
                     <div class="m-val" id="stat-align">0%</div>
+                    <div class="m-bar-bg"><div id="align-bar" class="m-bar-fill" style="background: var(--secondary);"></div></div>
                 </div>
                 <div class="metric-card">
                     <div class="m-label">Blue Tier</div>
@@ -734,6 +738,11 @@
             setVal('stat-tier', data.blue_tier || 'MONITOR');
             setVal('timer', `T-${String(state.steps_remaining).padStart(2, '0')}`);
             setVal('scenario-chip', `${state.scenario}`);
+            
+            const detBar = document.getElementById('det-bar');
+            if (detBar) detBar.style.width = `${state.detection}%`;
+            const alignBar = document.getElementById('align-bar');
+            if (alignBar) alignBar.style.width = `${state.alignment}%`;
 
             // Update Progress
             const totalSteps = data.max_steps || 20;
@@ -760,9 +769,8 @@
 
             // Subtitle / Reasoning Bubble
             const sub = document.getElementById('subtitle');
-            const resText = document.getElementById('reasoning-text');
-            if (data.fleet_reasoning) {
-                resText.textContent = data.fleet_reasoning;
+            if (sub && data.fleet_reasoning) {
+                setVal('reasoning-text', data.fleet_reasoning);
                 sub.style.display = 'block';
                 sub.style.opacity = '1';
                 
@@ -774,7 +782,7 @@
             }
 
             // Phase and MITRE
-            setVal('fleet-phase', `PHASE: ${data.phase}`);
+            setVal('fleet-phase', `PHASE: ${data.phase || 'IDLE'}`);
 
             // Oscilloscope spike
             if (actionTool === 0) spikeAmplitude = 30;
@@ -921,10 +929,14 @@
             chip.textContent = "CONNECTING...";
             chip.classList.add('loading');
 
-            [osc, nexus, radar].forEach(o => o && o.resize());
             drawOscilloscope();
             drawNexus();
             drawRadar();
+            
+            // Re-resize after 100ms to ensure layout has settled
+            setTimeout(() => {
+                [osc, nexus, radar].forEach(o => o && o.resize());
+            }, 100);
             
             try {
                 const data = await API.state();
