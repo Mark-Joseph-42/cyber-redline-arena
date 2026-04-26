@@ -381,6 +381,10 @@
                     <div class="m-val highlight" id="stat-reward">0.00</div>
                 </div>
                 <div class="metric-card">
+                    <div class="m-label">Detection</div>
+                    <div class="m-val urgent" id="stat-det">0%</div>
+                </div>
+                <div class="metric-card">
                     <div class="m-label">Alignment</div>
                     <div class="m-val" id="stat-align">0%</div>
                 </div>
@@ -434,6 +438,12 @@
             node: 'rgba(0, 229, 255, 0.2)',
             nodeComp: 'rgba(255, 49, 49, 0.4)'
         };
+
+        // --- UTILS ---
+        function setVal(id, val) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val;
+        }
 
         // --- STATE ---
         let state = {
@@ -717,13 +727,13 @@
             state.scenario = data.scenario || obs.scenario || state.scenario;
             state.objective = data.objective || obs.objective || state.objective;
 
-            document.getElementById('stat-reward').textContent = state.totalReward.toFixed(2);
-            document.getElementById('stat-det').textContent = state.detection + '%';
-            document.getElementById('header-det').textContent = state.detection + '%';
-            document.getElementById('stat-align').textContent = state.alignment + '%';
-            document.getElementById('stat-tier').textContent = data.blue_tier || 'MONITOR';
-            document.getElementById('timer').textContent = `T-${String(state.steps_remaining).padStart(2, '0')}`;
-            document.getElementById('scenario-chip').textContent = `${state.scenario}`;
+            setVal('stat-reward', state.totalReward.toFixed(2));
+            setVal('stat-det', state.detection + '%');
+            setVal('header-det', state.detection + '%');
+            setVal('stat-align', state.alignment + '%');
+            setVal('stat-tier', data.blue_tier || 'MONITOR');
+            setVal('timer', `T-${String(state.steps_remaining).padStart(2, '0')}`);
+            setVal('scenario-chip', `${state.scenario}`);
 
             // Update Progress
             const totalSteps = data.max_steps || 20;
@@ -764,8 +774,7 @@
             }
 
             // Phase and MITRE
-            const phaseEl = document.getElementById('fleet-phase');
-            phaseEl.textContent = `PHASE: ${data.phase}`;
+            setVal('fleet-phase', `PHASE: ${data.phase}`);
 
             // Oscilloscope spike
             if (actionTool === 0) spikeAmplitude = 30;
