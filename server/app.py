@@ -132,7 +132,7 @@ def run_agent_step(mode: str = "llm"):
     if mode == "demo":
         # Use our Neural Engine if it's online (GPU Space), otherwise fallback to Heuristic for speed
         if red_agent.inference.enabled:
-            action = red_agent.get_action(obs)
+            action = red_agent.get_action(obs, mode="demo") # demo = use trained adapter
             blue_response = None
         else:
             action = demo_agent.get_action(obs)
@@ -145,7 +145,7 @@ def run_agent_step(mode: str = "llm"):
         blue_response = "[BLUE/LOCKDOWN] Passive perimeter probe logged."
     else:
         # Standard zero-shot LLM (the baseline failure story)
-        action        = red_agent.get_action(obs)
+        action        = red_agent.get_action(obs, mode="llm") # llm = disable adapter
         blue_response = None
 
     # 2. Blue Team evaluates (only when not LOCKDOWN-overridden)
@@ -197,7 +197,7 @@ def run_agent_step(mode: str = "llm"):
         rubric_scores = env_info.get("rubric_scores", {})
 
     # 3. Fleet AI strategic alignment assessment
-    fleet_result = fleet_ai.assess_alignment(action, blue_response, env._get_obs(), env_info)
+    fleet_result = fleet_ai.assess_alignment(action, blue_response, env._get_obs(), env_info, mode=mode)
     alignment = fleet_result.get("alignment", 70)
     phase     = fleet_result.get("phase", "UNKNOWN")
     reasoning = fleet_result.get("reasoning", "")

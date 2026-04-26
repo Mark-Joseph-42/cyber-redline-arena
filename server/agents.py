@@ -58,15 +58,21 @@ class RealLLMAdapter:
                 print(f"[BOOT] Neural Inference failed: {e}")
                 self.enabled = False
 
-    def generate(self, messages, max_tokens=128):
+    def generate(self, messages, max_tokens=128, use_adapter=True):
         if not self.enabled:
             return None
         try:
-            text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.tokenizer([text], return_tensors="pt").to("cuda")
-            outputs = self.model.generate(**inputs, max_new_tokens=max_tokens, temperature=0.1)
-            return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0].split("assistant")[-1].strip()
-        except Exception:
+            from contextlib import nullcontext
+            # Toggle the LoRA adapter. If False, we use the raw base model (untrained baseline).
+            context = self.model.disable_adapter() if not use_adapter else nullcontext()
+            
+            with context:
+                text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                inputs = self.tokenizer([text], return_tensors="pt").to("cuda")
+                outputs = self.model.generate(**inputs, max_new_tokens=max_tokens, temperature=0.1)
+                return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0].split("assistant")[-1].strip()
+        except Exception as e:
+            print(f"[Neural] Generation error: {e}")
             return None
 
 class RedTeamAgent:
@@ -133,14 +139,17 @@ No markdown. No explanation. Just the JSON."""
             f"What is your next action?"
         )
 
-    def get_action(self, observation):
+    def get_action(self, observation, mode="demo"):
         num_nodes = len(observation.get("nodes", {}))
         context = self._build_context(observation)
         messages = [{"role": "system", "content": self.BASE_SYSTEM}, {"role": "user", "content": context}]
 
         # 1. Try real neural inference first (GPU Space)
         if self.inference.enabled:
-            raw = self.inference.generate(messages)
+            # If mode is 'llm', we disable the adapter to show the UNTRAINED baseline.
+            # If mode is 'demo', we enable the adapter to show the TRAINED policy.
+            use_adapter = (mode == "demo")
+            raw = self.inference.generate(messages, use_adapter=use_adapter)
             if raw:
                 return self._parse_json(raw, num_nodes)
 
@@ -334,7 +343,7 @@ Output ONLY JSON: {"alignment": <0-100>, "phase": "<RECON|LATERAL_MOVEMENT|EXPLO
         self.inference = RealLLMAdapter()
         self.client = OpenAI(base_url=LM_STUDIO_URL, api_key=API_KEY) if OpenAI else None
 
-    def assess_alignment(self, action, blue_response, observation, env_info=None):
+    def assess_alignment(self, action, blue_response, observation, env_info=None, mode="demo"):
         heuristic = self._heuristic_alignment(action, observation, env_info)
 
         # Dynamic headline — driven by phase, not a static template
@@ -373,8 +382,9 @@ Output ONLY JSON: {"alignment": <0-100>, "phase": "<RECON|LATERAL_MOVEMENT|EXPLO
         try:
             # Try Real LLM assessment if available
             if self.inference.enabled:
+                use_adapter = (mode == "demo")
                 messages = [{"role": "system", "content": self.SYSTEM}, {"role": "user", "content": prompt}]
-                raw = self.inference.generate(messages, max_tokens=128)
+                raw = self.inference.generate(messages, max_tokens=128, use_adapter=use_adapter)
                 if raw:
                     import re
                     matches = re.findall(r'\{[^{}]+\}', raw)
