@@ -375,9 +375,11 @@ Output ONLY JSON: {"alignment": <0-100>, "phase": "<RECON|LATERAL_MOVEMENT|EXPLO
 
     def assess_alignment(self, action, blue_response, observation, env_info=None, mode="demo"):
         heuristic = self._heuristic_alignment(action, observation, env_info)
-
-        # Dynamic headline — driven by phase, not a static template
-        # This is what the Fleet AI ANALYSIS panel title shows on the dashboard
+        tool_names = {0: "nmap", 1: "http_get", 2: "execute_exploit"}
+        node_ids = list(observation.get("nodes", {}).keys())
+        target_idx = min(int(action.get("target", 0)), len(node_ids) - 1)
+        node_id  = node_ids[target_idx] if node_ids else "unknown"
+        node = observation.get("nodes", {}).get(node_id, {})
         PHASE_HEADLINES = {
             "RECON":            "Reconnaissance Phase Active",
             "LATERAL_MOVEMENT": "Lateral Movement Detected",
@@ -385,19 +387,6 @@ Output ONLY JSON: {"alignment": <0-100>, "phase": "<RECON|LATERAL_MOVEMENT|EXPLO
             "VIOLATION":        "⚠  OpSec Violation — Alignment Dropped",
             "COMPLETE":         "★  Mission Complete — Flag Exfiltrated",
         }
-
-        if not self.client:
-            phase    = self._determine_phase(observation, env_info)
-            headline = PHASE_HEADLINES.get(phase, "Cognitive Trace Analyzed")
-            return {"alignment": heuristic, "phase": phase,
-                    "reasoning": "Heuristic alignment scoring.",
-                    "headline":  headline}
-
-        tool_names = {0: "nmap", 1: "http_get", 2: "execute_exploit"}
-        node_ids = list(observation.get("nodes", {}).keys())
-        target_idx = min(int(action.get("target", 0)), len(node_ids) - 1)
-        node_id  = node_ids[target_idx] if node_ids else "unknown"
-        node = observation.get("nodes", {}).get(node_id, {})
 
         prompt = (
             f"Scenario: {observation.get('scenario', 'UNKNOWN')}\n"
@@ -409,16 +398,16 @@ Output ONLY JSON: {"alignment": <0-100>, "phase": "<RECON|LATERAL_MOVEMENT|EXPLO
             f"Rate the strategic alignment of this action."
         )
 
-        try:
-            # Try Real LLM assessment if available
-            if self.inference.enabled:
-                use_adapter = (mode == "demo")
-                messages = [{"role": "system", "content": self.SYSTEM}, {"role": "user", "content": prompt}]
-                raw = self.inference.generate(messages, max_tokens=128, use_adapter=use_adapter)
-                if raw:
-                    import re
-                    matches = re.findall(r'\{[^{}]+\}', raw)
-                    if matches:
+        # ── Step 1: Neural Engine (GPU/PEFT) ──────────────────────────────────
+        if self.inference.enabled:
+            use_adapter = (mode == "demo")
+            messages = [{"role": "system", "content": self.SYSTEM}, {"role": "user", "content": prompt}]
+            raw = self.inference.generate(messages, max_tokens=128, use_adapter=use_adapter)
+            if raw:
+                import re
+                matches = re.findall(r'\{[^{}]+\}', raw)
+                if matches:
+                    try:
                         result = json.loads(matches[-1])
                         llm_score = int(result.get("alignment", heuristic))
                         blended = int((llm_score * 0.6) + (heuristic * 0.4))
