@@ -136,7 +136,11 @@
             align-items: center;
         }
 
-        #nexus-canvas { width: 100%; height: 100%; }
+        #nexus-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
 
         .tactical-bubble {
             position: absolute;
@@ -435,11 +439,18 @@
             const canvas = document.getElementById(id);
             if (!canvas) return null;
             const ctx = canvas.getContext('2d');
-            const rect = canvas.getBoundingClientRect();
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.height * dpr;
-            ctx.scale(dpr, dpr);
-            return { canvas, ctx };
+            
+            function resize() {
+                const rect = canvas.getBoundingClientRect();
+                if (rect.width === 0 || rect.height === 0) return;
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                ctx.resetTransform();
+                ctx.scale(dpr, dpr);
+            }
+            
+            resize();
+            return { canvas, ctx, resize };
         }
 
         // --- OSCILLOSCOPE ---
@@ -861,50 +872,35 @@
 
         // --- INIT ---
         window.onload = async () => {
+            // Force initial resize
+            [osc, nexus, radar].forEach(o => o && o.resize());
+            
             drawOscilloscope();
             drawNexus();
             drawRadar();
             
-            const data = await API.state();
-            if (data.observation) {
-               state.nodes = Object.entries(data.observation.nodes).map(([id, n]) => ({...n, id}));
-               state.scenario = data.scenario || "READY";
-               document.getElementById('scenario-chip').textContent = `${state.scenario}`;
-               document.getElementById('scenario-desc').textContent = data.scenario_desc || "Awaiting deployment.";
-               updateTerminal(`Initial State: ${data.scenario}`, COLORS.secondary);
-            }
             try {
-                const lb = await API.leaderboard();
-                const row = (lb.entries && (lb.entries.demo || lb.entries.llm)) || null;
-                if (row) {
-                    document.getElementById('leaderboard-preview').textContent =
-                        `Leaderboard: ${row.mode} avg reward ${row.avg_reward} | avg SAS ${row.avg_sas}`;
+                const data = await API.state();
+                if (data.observation && Object.keys(data.observation.nodes).length > 0) {
+                   updateUI(data);
                 } else {
-                    document.getElementById('leaderboard-preview').textContent = 'Leaderboard: no runs yet';
+                    // Force a reset if the state is empty (common on fresh Space boot)
+                    const boot = await API.reset();
+                    updateUI(boot);
                 }
-                const pbs = await API.playbooks();
-                const latest = (pbs.playbooks || []).slice(-1)[0];
-                if (latest) {
-                    const firstGap = (latest.gaps && latest.gaps[0]) ? latest.gaps[0] : 'No gaps returned';
-                    document.getElementById('playbook-preview').textContent = `Playbook: ${firstGap}`;
-                }
-            } catch (_) {}
+            } catch (e) {
+                console.error("Init failure:", e);
+                updateTerminal("Connection error. Retrying...", COLORS.error);
+            }
+
             // HF demo behavior: auto-run one episode on first page load.
-            // This showcases live reward, tier escalation, and stealth action selection immediately.
             setTimeout(() => {
-                autoStartDemoSession().catch(() => {});
-            }, 700);
+                if (!state.running) autoStartDemoSession().catch(() => {});
+            }, 1000);
         };
 
-        // Resize handler
         window.onresize = () => {
-             [osc, nexus, radar].forEach(o => {
-                if (!o) return;
-                const rect = o.canvas.parentNode.getBoundingClientRect();
-                o.canvas.width = rect.width * dpr;
-                o.canvas.height = rect.height * dpr;
-                o.ctx.scale(dpr, dpr);
-             });
+             [osc, nexus, radar].forEach(o => o && o.resize());
         };
 
     </script>
