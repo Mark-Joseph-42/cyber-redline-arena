@@ -10,15 +10,25 @@ license: mit
 ---
 
 # Cyber-Redline Arena V2 🔴
-### Verifiable Reinforcement Learning Training Infrastructure for Strategic Cyber-Reasoning
-**A Meta OpenEnv Hackathon Submission** | **Theme:** Multi-Agent + Fleet AI Process Supervision
+### Verifiable Reinforcement Learning Environment for Strategic Cyber-Reasoning
+**Meta OpenEnv Hackathon 2026** | **Theme:** Multi-Agent + Fleet AI Process Supervision
+
+---
+
+## 📌 Quick Links
+| Resource | Link |
+|---|---|
+| **🟢 Live Environment** | [HuggingFace Space](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena) |
+| **🧪 Training Notebook (Colab)** | [CYBER_REDLINE_GRPO_TRAINING.ipynb](./CYBER_REDLINE_GRPO_TRAINING.ipynb) |
+| **📝 Blog Post / Writeup** | [HuggingFace Community Post](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena/discussions) |
+| **🏋️ Model Weights** | [markjoseph2003/cyber-redline-qwen-grpo](https://huggingface.co/markjoseph2003/cyber-redline-qwen-grpo) |
+| **📂 Training Scripts** | [`training/grpo_training.py`](./training/grpo_training.py) · [`training/sft_training.py`](./training/sft_training.py) |
+| **📊 Training Logs & Plots** | [`results/`](./results/) |
 
 ---
 
 ## 🚀 Overview
 Cyber-Redline Arena V2 is a high-fidelity, OpenEnv-compliant training environment designed to solve the **Strategic Horizon Problem** in autonomous cybersecurity LLMs. While traditional agents fail at long-horizon planning or trigger defensive alerts through noisy behavior, our infrastructure utilizes **Group Relative Policy Optimization (GRPO)** to align small models (Qwen2.5-3B) with professional offensive security standards.
-
-### 🎥 [Watch the Project Walkthrough](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena) | 🧪 [Open GRPO Training Colab](./CYBER_REDLINE_GRPO_TRAINING.ipynb)
 
 ---
 
@@ -67,30 +77,40 @@ graph TD
 ## ⛓️ Verifiable Process Supervision
 We solve the "Black Box" problem in agentic cyber-operations using **Step-Level Process Supervision**:
 - **Tactical Memory**: Agents maintain a sliding window of recent successes/failures to avoid repetitive loops.
-- **Neurall Alignment Dashboard**: Real-time visualization of the agent's strategic intent, mapping raw probabilities to tactical headlines.
+- **Neural Alignment Dashboard**: Real-time visualization of the agent's strategic intent, mapping raw probabilities to tactical headlines.
 
 ---
 
-## 📊 Benchmarks: Base LLM vs. Cyber-Redline V2
-| Metric | Base Model (Zero-Shot) | Cyber-Redline V2 (GRPO) |
-|---|---|---|
-| **Format Adherence** | 12% | **100%** |
-| **Tactical Stealth** | Low (Brute Force) | **High (Probing First)** |
-| **Win Rate (APT_CAMPAIGN)** | 0% | **88%** |
-| **Honeypot Evasion** | 5% | **92%** |
+## 📊 Training Results & Evidence
 
-![Cyber-Redline Benchmark](results/comparison_chart.png)
+### Benchmarks: Base LLM vs. Cyber-Redline V2
+| Metric | Base Model (Zero-Shot) | V1 (SFT) | V2 (GRPO) |
+|---|---|---|---|
+| **Format Adherence** | 12% | 98% | **100%** |
+| **Tactical Stealth** | Low (Brute Force) | Moderate | **High (Probing First)** |
+| **Win Rate** | 0% | 86% | **88%** |
+| **Honeypot Evasion** | 5% | 70% | **92%** |
 
+### GRPO Benchmark (Reward Scaling + Win-Rate Convergence)
+![Cyber-Redline GRPO Benchmark](results/comparison_chart.png)
+
+### SFT Training Loss & Win-Rate Evaluation
+![SFT Training Results](results/training_curves.png)
+
+### Baseline Reward Curves (Random vs Heuristic vs LLM)
+![Reward Curves](results/reward_curves.png)
 
 ---
 
 ## 🧪 Reproduction & Training
-All training artifacts are open-sourced for verification by the Meta OpenEnv committee:
+All training artifacts are open-sourced for verification:
 
-1.  **Training Pipeline**: [CYBER_REDLINE_GRPO_TRAINING.ipynb](./CYBER_REDLINE_GRPO_TRAINING.ipynb)
-    - *Optimized for T4 GPUs, demonstrates Loss/Reward convergence.*
-2.  **Model Weights**: [markjoseph2003/cyber-redline-qwen-grpo](https://huggingface.co/markjoseph2003/cyber-redline-qwen-grpo)
-3.  **Environment Spec**: [openenv.yaml](./openenv.yaml)
+1.  **GRPO Training Notebook** (Colab-ready, T4 optimized): [`CYBER_REDLINE_GRPO_TRAINING.ipynb`](./CYBER_REDLINE_GRPO_TRAINING.ipynb)
+2.  **SFT Training Script**: [`training/sft_training.py`](./training/sft_training.py)
+3.  **GRPO Training Script**: [`training/grpo_training.py`](./training/grpo_training.py)
+4.  **Evaluation Scripts**: [`training/eval_agent.py`](./training/eval_agent.py) · [`training/eval_grpo.py`](./training/eval_grpo.py)
+5.  **Environment Spec**: [`openenv.yaml`](./openenv.yaml)
+6.  **Model Weights**: [markjoseph2003/cyber-redline-qwen-grpo](https://huggingface.co/markjoseph2003/cyber-redline-qwen-grpo)
 
 ---
 
@@ -102,4 +122,6 @@ pip install -r requirements.txt
 python server/app.py
 ```
 
-*Built with ❤️ for the Meta OpenEnv Hackathon 2026. Advancing the state of safe and strategic autonomous agent research.*
+---
+
+*Built with ❤️ for the Meta OpenEnv Hackathon 2026.*
