@@ -127,6 +127,22 @@
             opacity: 0.8;
         }
 
+        #status-chip { 
+            background: rgba(0, 229, 255, 0.1); 
+            color: var(--primary);
+            border: 1px solid var(--primary);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+        }
+        #status-chip.loading {
+            background: rgba(255, 170, 0, 0.1);
+            color: var(--warn);
+            border-color: var(--warn);
+        }
+
         /* --- MAIN VIEWPORT --- */
         main {
             flex-grow: 1;
@@ -672,14 +688,30 @@
         }
 
         function updateUI(data) {
-            state.nodes = data.nodes || [];
-            state.detection = data.detection_level || 0;
+            // Support both raw environment observations and step payloads
+            const obs = data.observation || data;
+            
+            // Normalize Nodes (backend observation uses dict, step payload uses list)
+            if (obs.nodes && !Array.isArray(obs.nodes)) {
+                state.nodes = Object.entries(obs.nodes).map(([id, n]) => ({
+                    id: id,
+                    label: n.label,
+                    status: n.status,
+                    is_honeypot: n.is_honeypot,
+                    is_objective: id === (obs.objective || state.objective)
+                }));
+            } else if (data.nodes) {
+                state.nodes = data.nodes;
+            }
+
+            state.detection = data.detection_level || obs.detection_level || 0;
             state.reward = Number(data.reward || 0);
             state.totalReward += state.reward;
-            state.alignment = Number(data.alignment || 0);
-            state.steps_remaining = data.steps_remaining;
+            state.alignment = Number(data.alignment || 70);
+            state.steps_remaining = data.steps_remaining !== undefined ? data.steps_remaining : (obs.steps_remaining || 0);
             state.lastActionTarget = data.action ? data.action.target : null;
-            state.scenario = data.scenario || state.scenario;
+            state.scenario = data.scenario || obs.scenario || state.scenario;
+            state.objective = data.objective || obs.objective || state.objective;
 
             document.getElementById('stat-reward').textContent = state.totalReward.toFixed(2);
             document.getElementById('stat-det').textContent = state.detection + '%';
@@ -872,9 +904,11 @@
 
         // --- INIT ---
         window.onload = async () => {
-            // Force initial resize
+            const chip = document.getElementById('status-chip');
+            chip.textContent = "CONNECTING...";
+            chip.classList.add('loading');
+
             [osc, nexus, radar].forEach(o => o && o.resize());
-            
             drawOscilloscope();
             drawNexus();
             drawRadar();
@@ -883,20 +917,27 @@
                 const data = await API.state();
                 if (data.observation && Object.keys(data.observation.nodes).length > 0) {
                    updateUI(data);
+                   chip.textContent = "READY";
+                   chip.classList.remove('loading');
                 } else {
-                    // Force a reset if the state is empty (common on fresh Space boot)
-                    const boot = await API.reset();
-                    updateUI(boot);
+                   const boot = await API.reset();
+                   updateUI(boot);
+                   chip.textContent = "STANDBY";
+                   chip.classList.remove('loading');
                 }
             } catch (e) {
                 console.error("Init failure:", e);
-                updateTerminal("Connection error. Retrying...", COLORS.error);
+                chip.textContent = "OFFLINE";
+                updateTerminal("Backend initializing (this may take a few minutes on HF Spaces)...", COLORS.warn);
+                // Retry every 5 seconds if offline (Space is booting)
+                setTimeout(window.onload, 5000);
             }
 
-            // HF demo behavior: auto-run one episode on first page load.
             setTimeout(() => {
-                if (!state.running) autoStartDemoSession().catch(() => {});
-            }, 1000);
+                if (!state.running && chip.textContent !== "OFFLINE") {
+                    autoStartDemoSession().catch(() => {});
+                }
+            }, 1500);
         };
 
         window.onresize = () => {

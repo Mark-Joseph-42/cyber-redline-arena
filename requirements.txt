@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-gym
+gymnasium
 pydantic
 trl
 unsloth
@@ -11,3 +11,7 @@ accelerate
 peft
 bitsandbytes
 openenv
+openai
+requests
+python-multipart
+jinja2

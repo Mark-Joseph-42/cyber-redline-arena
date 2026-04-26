@@ -8,29 +8,26 @@ FleetAIEvaluator:  XAI Oversight measuring STRATEGIC ALIGNMENT (not threat level
 
 import json
 import random
-from datetime import datetime
+import os
 
 try:
     from openai import OpenAI
 except ImportError:
     OpenAI = None
 
+# Detect if we are on HuggingFace Spaces (CPU only usually)
+IS_HF = os.getenv("SPACE_ID") is not None
+HAS_GPU = not IS_HF # Simple assumption for hackathon demo stability
+
 LM_STUDIO_URL = "http://localhost:1234/v1"
 API_KEY = "lm-studio"
-
-
-class UnslothInferenceAdapter:
-    """
-    Small adapter to keep rollout loops fast while allowing an Unsloth-backed model.
-    Falls back to the default local model if UNSLOTH_MODEL is not set.
-    """
-
     def __init__(self):
         self.model = "local-model"
         self.enabled = False
+        if not HAS_GPU:
+            return
         try:
             import os
-
             m = os.getenv("UNSLOTH_MODEL", "").strip()
             if m:
                 self.model = m
