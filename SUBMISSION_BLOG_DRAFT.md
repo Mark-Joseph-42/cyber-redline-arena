@@ -15,5 +15,9 @@ To ensure safety and alignment, we integrated **Fleet AI** for process supervisi
 - **Format Adherence**: 12% (Base) -> 100% (GRPO)
 - **Win Rate**: 0% (Base) -> 88% (GRPO)
 
-Check out our OpenEnv environment on HuggingFace Spaces!
-[Link to Space]
+---
+
+## 🔗 Try it Yourself
+*   **Live Arena**: [Cyber-Redline Arena V2](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena)
+*   **Training Proof**: [GRPO Training Colab](./CYBER_REDLINE_GRPO_TRAINING.ipynb) - Run our pipeline and verify the reward curves!
+*   **Model Weights**: [Neural Policy V2](https://huggingface.co/markjoseph2003/cyber-redline-qwen-grpo)

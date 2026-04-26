@@ -119,4 +119,13 @@ V2 implements **Process Supervision** rather than just Outcome Reward. The `Flee
 - **Dashboard**: Vanilla JS + CSS (Cyberpunk Glassmorphism)
 
 ---
+
+## 🔗 Reproduction & Verifiability
+We believe in open research. All neural training artifacts are provided for verification:
+
+*   **Training Notebook**: [CYBER_REDLINE_GRPO_TRAINING.ipynb](./CYBER_REDLINE_GRPO_TRAINING.ipynb) - Open this in Google Colab to reproduce our GRPO training loop.
+*   **Model Repository**: [markjoseph2003/cyber-redline-qwen-grpo](https://huggingface.co/markjoseph2003/cyber-redline-qwen-grpo) - The hardened LoRA weights.
+
+---
+
 *Built by Mark Joseph for the Meta OpenEnv Hackathon 2026. This environment is designed for verifiable, safe, and strategic autonomous agent research.*
