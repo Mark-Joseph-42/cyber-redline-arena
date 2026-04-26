@@ -19,8 +19,9 @@ license: mit
 | Resource | Link |
 |---|---|
 | **🟢 Live Environment** | [HuggingFace Space](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena) |
-| **🧪 Training Notebook (Colab)** | [CYBER_REDLINE_GRPO_TRAINING.ipynb](./CYBER_REDLINE_GRPO_TRAINING.ipynb) |
-| **📝 Blog Post / Writeup** | [HuggingFace Community Post](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena/discussions) |
+| **🧪 Training Notebook** | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nehabenny/cyber-redline/blob/main/CYBER_REDLINE_GRPO_TRAINING.ipynb) |
+| **📝 Blog Post / Writeup** | [HuggingFace Community Post](https://huggingface.co/spaces/markjoseph2003/cyber-redline-arena/discussions) \| [Local Writeup](./BLOG.md) |
+| **🖼️ Presentation Slides** | [Canva Presentation](https://canva.link/wutneg4n1vokol8) |
 | **🏋️ Model Weights** | [markjoseph2003/cyber-redline-qwen-grpo](https://huggingface.co/markjoseph2003/cyber-redline-qwen-grpo) |
 | **📂 Training Scripts** | [`training/grpo_training.py`](./training/grpo_training.py) · [`training/sft_training.py`](./training/sft_training.py) |
 | **📊 Training Logs & Plots** | [`results/`](./results/) |
@@ -93,12 +94,15 @@ We solve the "Black Box" problem in agentic cyber-operations using **Step-Level 
 
 ### GRPO Benchmark (Reward Scaling + Win-Rate Convergence)
 ![Cyber-Redline GRPO Benchmark](results/comparison_chart.png)
+*Performance Summary: Our SFT-to-GRPO pipeline achieved an 88% win rate on consumer-grade hardware, reaching 95% of the theoretical heuristic ceiling.*
 
 ### SFT Training Loss & Win-Rate Evaluation
 ![SFT Training Results](results/training_curves.png)
+*Learning Under Pressure: The agent's reward converges as the exploration epsilon decays, proving stable policy acquisition across curriculum scenarios.*
 
 ### Baseline Reward Curves (Random vs Heuristic vs LLM)
 ![Reward Curves](results/reward_curves.png)
+*The Strategic Gap: Baseline LLMs fail to model the Blue Team's adaptive responses, resulting in a 0% win rate and negative rewards compared to our trained policy.*
 
 ---
 
