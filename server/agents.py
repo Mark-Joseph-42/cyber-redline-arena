@@ -21,6 +21,8 @@ HAS_GPU = not IS_HF # Simple assumption for hackathon demo stability
 
 LM_STUDIO_URL = "http://localhost:1234/v1"
 API_KEY = "lm-studio"
+
+class UnslothInferenceAdapter:
     def __init__(self):
         self.model = "local-model"
         self.enabled = False
