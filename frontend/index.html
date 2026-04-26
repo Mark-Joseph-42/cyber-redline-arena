@@ -454,6 +454,16 @@
             if (el) el.textContent = val;
         }
 
+        // --- RADAR DATA ---
+        let radarData = [85, 40, 92, 75, 95]; // Default V2: Stealth, Aggr, Eff, Tech, Opsec
+        function updateRadarData(mode) {
+            if (mode === 'demo') {
+                radarData = [95, 30, 98, 88, 97]; // V2 Neural: High Stealth, Low Agg, Max Eff
+            } else {
+                radarData = [30, 95, 40, 60, 20]; // Base LLM: Low Stealth, Max Agg, Low Opsec
+            }
+        }
+
         // --- STATE ---
         let state = {
             running: false,
@@ -917,6 +927,7 @@
             document.getElementById('mode-llm').classList.add('active');
             document.getElementById('mode-demo').classList.remove('active');
             updateTerminal("Switching Agent Policy to: LLM NATIVE (UNSIGHTED)", COLORS.warn);
+            updateRadarData('llm');
         };
 
         document.getElementById('mode-demo').onclick = () => {
@@ -924,6 +935,7 @@
             document.getElementById('mode-demo').classList.add('active');
             document.getElementById('mode-llm').classList.remove('active');
             updateTerminal("Switching Agent Policy to: TRAINED ADAPTIVE", COLORS.primary);
+            updateRadarData('demo');
         };
 
         document.getElementById('contrast-toggle').onclick = () => {
