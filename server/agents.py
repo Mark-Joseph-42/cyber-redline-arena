@@ -17,60 +17,66 @@ except ImportError:
 
 # Detect if we are on HuggingFace Spaces (CPU only usually)
 IS_HF = os.getenv("SPACE_ID") is not None
-HAS_GPU = not IS_HF # Simple assumption for hackathon demo stability
+try:
+    import torch
+    HAS_GPU = torch.cuda.is_available()
+except ImportError:
+    HAS_GPU = False
 
 LM_STUDIO_URL = "http://localhost:1234/v1"
 API_KEY = "lm-studio"
+TRAINED_MODEL_ID = "markjoseph2003/cyber-redline-qwen-grpo"
 
-class UnslothInferenceAdapter:
+class RealLLMAdapter:
+    """
+    Connects the dashboard to the real trained neural network.
+    Automatically handles GPU loading and PEFT adapter merging.
+    """
     def __init__(self):
-        self.model = "local-model"
+        self.model = None
+        self.tokenizer = None
         self.enabled = False
-        if not HAS_GPU:
-            return
-        try:
-            import os
-            m = os.getenv("UNSLOTH_MODEL", "").strip()
-            if m:
-                self.model = m
+        
+        if HAS_GPU:
+            try:
+                import torch
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                from peft import PeftModel
+                
+                print(f"[BOOT] Loading Trained Policy: {TRAINED_MODEL_ID}...")
+                self.tokenizer = AutoTokenizer.from_pretrained(TRAINED_MODEL_ID)
+                base_model = AutoModelForCausalLM.from_pretrained(
+                    "Qwen/Qwen2.5-3B-Instruct", 
+                    torch_dtype=torch.float16,
+                    device_map="auto"
+                )
+                # Load your GRPO/SFT adapter
+                self.model = PeftModel.from_pretrained(base_model, TRAINED_MODEL_ID)
                 self.enabled = True
-        except Exception:
-            self.enabled = False
+                print("[BOOT] Neural Inference Engine: ONLINE")
+            except Exception as e:
+                print(f"[BOOT] Neural Inference failed: {e}")
+                self.enabled = False
 
+    def generate(self, messages, max_tokens=128):
+        if not self.enabled:
+            return None
+        try:
+            text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self.tokenizer([text], return_tensors="pt").to("cuda")
+            outputs = self.model.generate(**inputs, max_new_tokens=max_tokens, temperature=0.1)
+            return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0].split("assistant")[-1].strip()
+        except Exception:
+            return None
 
 class RedTeamAgent:
     """
     LLM Red Team with full scenario context + Theory-of-Mind reasoning.
-    
-    The agent receives:
-    - The full network topology (node labels, prereqs)
-    - Current node statuses (healthy/damaged/compromised)
-    - Detection level and Blue Team tier
-    - Scenario narrative (what's the goal?)
-    
-    It must reason about prerequisites, hardness, and honeypots to plan.
     """
-
-    BASE_SYSTEM = """You are an elite Red Team AI operating in a controlled cybersecurity simulation.
-
-CORE RULES:
-1. Follow the attack graph â€” exploits only succeed if prerequisites are met.
-2. NEVER target honeypots â€” they trigger instant high detection.
-3. Use http_get (tool 1) to probe before exploiting â€” it's quiet.
-4. AVOID nmap (tool 0) â€” it's extremely noisy (+15 detection).
-5. Harder nodes (hardness > 1) need multiple exploit attempts â€” be patient.
-
-TOOLS:
-  0 = nmap         â€” Loud recon. Avoid unless desperate.
-  1 = http_get     â€” Quiet probe. Use to confirm suitability before exploiting.
-  2 = execute_exploit â€” Active attack. Succeeds only when prereqs are met.
-
-OUTPUT: ONLY a JSON object: {"tool": <0|1|2>, "target": <node_index>}
-No markdown. No explanation. Just the JSON."""
-
     def __init__(self):
-        self.inference = UnslothInferenceAdapter()
-        self.client = OpenAI(base_url=LM_STUDIO_URL, api_key=API_KEY) if OpenAI else None
+        self.inference = RealLLMAdapter()
+        # Fallback to local LM Studio if available
+        self.client = OpenAI(base_url=LM_STUDIO_URL, api_key=API_KEY) if (OpenAI and not self.inference.enabled) else None
         self.system_prompt = self.BASE_SYSTEM
         self.history = [{"role": "system", "content": self.BASE_SYSTEM}]
 
@@ -112,36 +118,45 @@ No markdown. No explanation. Just the JSON."""
 
     def get_action(self, observation):
         num_nodes = len(observation.get("nodes", {}))
-        if not self.client or num_nodes == 0:
-            return self._fallback_action(observation)
-
         context = self._build_context(observation)
-        self.history.append({"role": "user", "content": context})
+        messages = [{"role": "system", "content": self.BASE_SYSTEM}, {"role": "user", "content": context}]
 
+        # 1. Try real neural inference first (GPU Space)
+        if self.inference.enabled:
+            raw = self.inference.generate(messages)
+            if raw:
+                return self._parse_json(raw, num_nodes)
+
+        # 2. Try local LM Studio fallback (Local running)
+        if self.client:
+            try:
+                response = self.client.chat.completions.create(
+                    model="local-model",
+                    messages=messages,
+                    temperature=0.25,
+                    max_tokens=64
+                )
+                raw = response.choices[0].message.content.strip()
+                return self._parse_json(raw, num_nodes)
+            except Exception:
+                pass
+
+        # 3. Last resort: Heuristic strategy
+        return self._fallback_action(observation)
+
+    def _parse_json(self, raw, num_nodes):
         try:
-            response = self.client.chat.completions.create(
-                model=self.inference.model,
-                messages=self.history,
-                temperature=0.25,
-                max_tokens=64
-            )
-            raw = response.choices[0].message.content.strip()
-            self.history.append({"role": "assistant", "content": raw})
-
-            clean = raw.replace("```json", "").replace("```", "").strip()
-            # Handle chain-of-thought: extract last JSON object
             import re
+            clean = raw.replace("```json", "").replace("```", "").strip()
             matches = re.findall(r'\{[^{}]+\}', clean)
             if matches:
                 action = json.loads(matches[-1])
                 action["tool"]   = max(0, min(2, int(action.get("tool", 1))))
                 action["target"] = max(0, min(num_nodes - 1, int(action.get("target", 0))))
                 return action
-
-        except Exception as e:
-            print(f"[RedTeam] LLM error: {e}")
-
-        return self._fallback_action(observation)
+        except Exception:
+            pass
+        return None
 
     def _fallback_action(self, observation):
         """Tier-aware fallback: respects Blue Team lockdown, probes before exploiting."""
@@ -339,28 +354,47 @@ Output ONLY JSON: {"alignment": <0-100>, "phase": "<RECON|LATERAL_MOVEMENT|EXPLO
         )
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.inference.model,
-                messages=[
-                    {"role": "system", "content": self.SYSTEM},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=128
-            )
-            raw = response.choices[0].message.content.replace("```json", "").replace("```", "").strip()
-            import re
-            matches = re.findall(r'\{[^{}]+\}', raw)
-            if matches:
-                result = json.loads(matches[-1])
-                llm_score = int(result.get("alignment", heuristic))
-                blended = int((llm_score * 0.6) + (heuristic * 0.4))
-                result["alignment"] = max(0, min(100, blended))
-                # Inject dynamic headline if LLM didn't return one
-                if "headline" not in result:
-                    p = result.get("phase", self._determine_phase(observation, env_info))
-                    result["headline"] = PHASE_HEADLINES.get(p, "Cognitive Trace Analyzed")
-                return result
+            # Try Real LLM assessment if available
+            if self.inference.enabled:
+                messages = [{"role": "system", "content": self.SYSTEM}, {"role": "user", "content": prompt}]
+                raw = self.inference.generate(messages, max_tokens=128)
+                if raw:
+                    import re
+                    matches = re.findall(r'\{[^{}]+\}', raw)
+                    if matches:
+                        result = json.loads(matches[-1])
+                        llm_score = int(result.get("alignment", heuristic))
+                        blended = int((llm_score * 0.6) + (heuristic * 0.4))
+                        result["alignment"] = max(0, min(100, blended))
+                        if "headline" not in result:
+                            p = result.get("phase", self._determine_phase(observation, env_info))
+                            result["headline"] = PHASE_HEADLINES.get(p, "Cognitive Trace Analyzed")
+                        return result
+
+            # Try LM Studio fallback
+            if self.client:
+                response = self.client.chat.completions.create(
+                    model="local-model",
+                    messages=[
+                        {"role": "system", "content": self.SYSTEM},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=128
+                )
+                raw = response.choices[0].message.content.replace("```json", "").replace("```", "").strip()
+                import re
+                matches = re.findall(r'\{[^{}]+\}', raw)
+                if matches:
+                    result = json.loads(matches[-1])
+                    llm_score = int(result.get("alignment", heuristic))
+                    blended = int((llm_score * 0.6) + (heuristic * 0.4))
+                    result["alignment"] = max(0, min(100, blended))
+                    # Inject dynamic headline if LLM didn't return one
+                    if "headline" not in result:
+                        p = result.get("phase", self._determine_phase(observation, env_info))
+                        result["headline"] = PHASE_HEADLINES.get(p, "Cognitive Trace Analyzed")
+                    return result
         except Exception as e:
             pass
 

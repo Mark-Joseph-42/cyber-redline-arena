@@ -125,23 +125,28 @@ def run_agent_step(mode: str = "llm"):
     obs = env._get_obs()
 
     # ── Agent Selection ──────────────────────────────────────────────────────
-    # Demo mode uses the heuristic agent (guaranteed FLAG CAPTURED).
-    # LLM mode uses the zero-shot model (demonstrates baseline failure for DPO story).
-    # LOCKDOWN is a hard env constraint — no legal move exists except perimeter probe.
+    # Mode 'demo' (V2 button) tries the Real Neural Engine first.
+    # Mode 'llm' (Base button) uses the baseline zero-shot model.
     tier = env.state.get("blue_tier", "MONITOR")
+    
     if mode == "demo":
-        action = demo_agent.get_action(obs)
-        # Demo agent respects LOCKDOWN internally — mark response accordingly
-        if tier == "LOCKDOWN":
-            blue_response = "[BLUE/LOCKDOWN] Passive perimeter probe logged."
+        # Use our Neural Engine if it's online (GPU Space), otherwise fallback to Heuristic for speed
+        if red_agent.inference.enabled:
+            action = red_agent.get_action(obs)
+            blue_response = None
         else:
-            blue_response = None  # Will be evaluated normally below
+            action = demo_agent.get_action(obs)
+            if tier == "LOCKDOWN":
+                blue_response = "[BLUE/LOCKDOWN] Passive perimeter probe logged."
+            else:
+                blue_response = None
     elif tier == "LOCKDOWN":
-        action        = {"tool": 1, "target": 0}   # Hard env constraint: SIEM blocks internal routing
+        action        = {"tool": 1, "target": 0}
         blue_response = "[BLUE/LOCKDOWN] Passive perimeter probe logged."
     else:
+        # Standard zero-shot LLM (the baseline failure story)
         action        = red_agent.get_action(obs)
-        blue_response = None  # Will be evaluated normally below
+        blue_response = None
 
     # 2. Blue Team evaluates (only when not LOCKDOWN-overridden)
     if blue_response is None:
