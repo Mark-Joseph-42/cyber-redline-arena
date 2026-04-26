@@ -361,6 +361,10 @@
         <div id="subtitle" class="tactical-bubble" style="display: none;">
             <span>Fleet AI Advisory</span>
             <div id="reasoning-text">Heuristic alignment scoring.</div>
+            <div id="tactical-memory" style="margin-top: 15px; border-top: 1px solid var(--border); padding-top: 10px; font-size: 0.65rem; color: var(--text-dim);">
+                <span style="color: var(--primary); font-weight: 700;">TACTICAL MEMORY:</span>
+                <div id="memory-list" style="margin-top: 5px; font-family: var(--font-mono);">No history yet.</div>
+            </div>
         </div>
     </main>
 
@@ -783,6 +787,14 @@
 
             // Phase and MITRE
             setVal('fleet-phase', `PHASE: ${data.phase || 'IDLE'}`);
+
+            // Update Memory
+            if (data.history) {
+                const memList = document.getElementById('memory-list');
+                if (memList) {
+                    memList.innerHTML = data.history.map(m => `<div>${m}</div>`).join('');
+                }
+            }
 
             // Oscilloscope spike
             if (actionTool === 0) spikeAmplitude = 30;

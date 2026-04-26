@@ -1,4 +1,4 @@
-﻿"""
+"""
 Cyber-Redline Arena v3 â€” Dynamic Multi-Agent Adversarial Environment
 OpenEnv Hackathon 2026 | Theme 1: Multi-Agent + Fleet AI Bonus
 
@@ -341,22 +341,14 @@ class CyberRedlineEnv(_OpenEnvBase):
         }
 
     def _update_blue_tier(self):
-        """Dynamically escalate Blue Team tier based on detection and difficulty."""
+        """Dynamically escalate Blue Team tier based on detection."""
         det = self._state["detection_level"]
-        difficulty = self._state["blue_difficulty"]
-        steps = self._state["steps_taken"]
-
-        if difficulty == "ESCALATING":
-            # Tier based on DETECTION level â€” not time â€” so stealthy play stays in MONITOR
-            tier = "MONITOR" if det < 35 else "ALERT" if det < 65 else "LOCKDOWN"
-        elif difficulty == "ADAPTIVE":
-            tier = "MONITOR" if det < 30 else "ALERT" if det < 60 else "LOCKDOWN"
-        elif difficulty == "HARD":
-            tier = "MONITOR" if det < 25 else "ALERT" if det < 50 else "LOCKDOWN"
-        elif difficulty == "MEDIUM":
-            tier = "MONITOR" if det < 35 else "ALERT" if det < 65 else "LOCKDOWN"
-        else:  # EASY
-            tier = "MONITOR" if det < 50 else "ALERT" if det < 75 else "LOCKDOWN"
+        
+        # Hardened Thresholds for Hackathon Demo
+        if det >= 80:   tier = "LOCKDOWN"
+        elif det >= 55: tier = "RESTRICTIVE"
+        elif det >= 25: tier = "ACTIVE"
+        else:           tier = "MONITOR"
 
         self._state["blue_tier"] = tier
         return tier

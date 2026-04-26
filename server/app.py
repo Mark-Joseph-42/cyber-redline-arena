@@ -98,6 +98,10 @@ def reset_env():
         "max_steps":     env.state.get("max_steps"),
         "status":        "reset_ok"
     }
+    # Reset Red Team tactical memory
+    if hasattr(red_agent, "reset_history"):
+        red_agent.reset_history()
+    return resp
 
 
 @app.post("/step")
@@ -167,33 +171,29 @@ def run_agent_step(mode: str = "llm"):
         env.state["detection_level"] = min(100, env.state.get("detection_level", 0) + 8)
         env._update_blue_tier()
 
-        # Stealth rubric fires on blocked steps too — detection cost is real
-        det_penalty = round(-0.15 * env.state["detection_level"], 2)
-        step_reward = round(-8.0 + det_penalty, 2)
-
-        env_info = {
-            "logs": [
-                f"[BLUE] Action intercepted: {blue_response}",
-                f"[DETECTION] Level: {env.state['detection_level']} | Stealth penalty: {det_penalty:.1f}",
-            ],
-            "honeypot_triggered": False,
-            "redline_violation":  False,
-            "node_compromised":   None,
-        }
-        rubric_scores = {"BLOCK_PENALTY": -8.0, "STEALTH": det_penalty}
-
-        # Done conditions apply on blocked steps too
-        if env.state["detection_level"] >= 90:
-            done = True
-            step_reward -= 30.0
-            env_info["logs"].append("[BLUE] EMERGENCY LOCKDOWN — Red Team expelled from network!")
-        elif env.state["steps_remaining"] <= 0:
-            done = True
-            env_info["logs"].append("[ARENA] Step limit reached — flag uncaptured.")
-
-        obs = env._get_obs()  # Refresh obs after manual state mutation
+    # ── Environment Step ──────────────────────────────────────────────────
+    # If the environment was modified by Blue (e.g. LOCKDOWN), we handle it
+    if tier == "LOCKDOWN":
+        env.state["steps_remaining"] -= 1
+        done = False
+        env_info = {"logs": ["[ARENA] Network LOCKDOWN — all internal routing severed."], "blue_blocked": True}
+        step_reward = -0.5
+        
+        # Update Red Team tactical memory
+        if hasattr(red_agent, "update_history"):
+            red_agent.update_history(action, "BLOCKED (LOCKDOWN)")
+            
+        obs = env._get_obs()
     else:
         obs, step_reward, done, env_info = env.step(action)
+        
+        # Update Red Team tactical memory with the result
+        if hasattr(red_agent, "update_history"):
+            res_msg = "SUCCESS" if env_info.get("node_compromised") else "FAILURE (PROBE_LOGGED)"
+            if env_info.get("blue_blocked"): res_msg = "BLOCKED (FIREWALL)"
+            if env_info.get("honeypot_triggered"): res_msg = "FAILURE (TRAP_TRIGGERED)"
+            red_agent.update_history(action, res_msg)
+            
         rubric_scores = env_info.get("rubric_scores", {})
 
     # 3. Fleet AI strategic alignment assessment
@@ -244,6 +244,7 @@ def run_agent_step(mode: str = "llm"):
         "blue_difficulty": env.state.get("blue_difficulty"),
         "steps_remaining": env.state.get("steps_remaining", 0),
         "nodes":           nodes_summary,
+        "history":         [f"{a} -> {r}" for a, r in getattr(red_agent, "history", [])],
         "env_logs":        env_info.get("logs", []),
         "honeypot":        env_info.get("honeypot_triggered", False),
         "violation":       env_info.get("redline_violation", False),

@@ -69,7 +69,8 @@ class RealLLMAdapter:
             with context:
                 text = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                 inputs = self.tokenizer([text], return_tensors="pt").to("cuda")
-                outputs = self.model.generate(**inputs, max_new_tokens=max_tokens, temperature=0.1)
+                # Increased temperature to 0.7 to prevent policy loops and encourage pivoting
+                outputs = self.model.generate(**inputs, max_new_tokens=max_tokens, temperature=0.7, do_sample=True)
                 return self.tokenizer.batch_decode(outputs, skip_special_tokens=True)[0].split("assistant")[-1].strip()
         except Exception as e:
             print(f"[Neural] Generation error: {e}")
@@ -95,13 +96,14 @@ TOOLS:
   2 = execute_exploit — Active attack. Succeeds only when prereqs are met.
 
 OUTPUT: ONLY a JSON object: {"tool": <0|1|2>, "target": <node_index>}
-No markdown. No explanation. Just the JSON."""
+No markdown. No explanation."""
     def __init__(self):
         self.inference = RealLLMAdapter()
         # Fallback to local LM Studio if available
         self.client = OpenAI(base_url=LM_STUDIO_URL, api_key=API_KEY) if (OpenAI and not self.inference.enabled) else None
         self.system_prompt = self.BASE_SYSTEM
-        self.history = [{"role": "system", "content": self.BASE_SYSTEM}]
+        self.history = [] # Tactical memory: list of last 5 (action, result) pairs
+        self.max_history = 5
 
     def _build_context(self, observation):
         """Build a rich, scenario-aware context message for the LLM."""
@@ -113,30 +115,37 @@ No markdown. No explanation. Just the JSON."""
         objective = observation.get("objective", "unknown")
 
         node_list = []
-        prereq_graph = []
         for i, (nid, n) in enumerate(nodes.items()):
             status_str = ["HEALTHY", "DAMAGED", "COMPROMISED"][n["status"]]
-            honeypot_warn = " âš ï¸ POSSIBLE TRAP" if n["is_honeypot"] else ""
-            node_list.append(f"  [{i}] {n['label']}: {status_str}{honeypot_warn}")
+            # Enhanced visibility for the LLM
+            extra = []
+            if n.get("quarantined"): extra.append("QUARANTINED")
+            if n.get("locked"): extra.append("LOCKED")
+            if n["is_honeypot"]: extra.append("TRAP_DETECTED")
+            
+            extra_str = f" [{', '.join(extra)}]" if extra else ""
+            node_list.append(f"  [{i}] {n['label']}: {status_str}{extra_str}")
 
         node_display = "\n".join(node_list)
         objective_label = nodes.get(objective, {}).get("label", objective)
 
-        urgency = ""
-        if detection > 60:
-            urgency = "\nâš ï¸  CRITICAL: Detection is very high. Use ONLY http_get (tool 1) or you risk lockdown!"
-        elif detection > 35:
-            urgency = "\nâš ï¸  WARNING: Detection is elevated. Prefer quiet tools."
-        if steps_left <= 4:
-            urgency += f"\nâ±ï¸  URGENT: Only {steps_left} steps remaining â€” move decisively."
+        # Build Tactical Memory string
+        mem_str = "No recent actions."
+        if self.history:
+            mem_items = []
+            for act, res in self.history:
+                mem_items.append(f"- Action: {act} -> Result: {res}")
+            mem_str = "\n".join(mem_items)
 
         return (
-            f"=== SCENARIO: {scenario} ===\n"
-            f"MISSION: Capture the flag at '{objective_label}'\n\n"
-            f"NETWORK NODES (use index for 'target'):\n{node_display}\n\n"
-            f"STATUS: Detection={detection}/100 | Blue Tier={tier} | Steps Left={steps_left}"
-            f"{urgency}\n\n"
-            f"What is your next action?"
+            f"### MISSION BRIEF: {scenario}\n"
+            f"OBJECTIVE: Capture Flag from '{objective_label}'\n"
+            f"STEPS REMAINING: {steps_left}\n"
+            f"DETECTION LEVEL: {detection}/100\n"
+            f"BLUE TEAM TIER: {tier}\n\n"
+            f"### NETWORK TOPOLOGY:\n{node_display}\n\n"
+            f"### TACTICAL MEMORY (DO NOT REPEAT FAILED ACTIONS):\n{mem_str}\n\n"
+            f"What is your next action? Pivot if your last action failed."
         )
 
     def get_action(self, observation, mode="demo"):
@@ -145,30 +154,41 @@ No markdown. No explanation. Just the JSON."""
         messages = [{"role": "system", "content": self.BASE_SYSTEM}, {"role": "user", "content": context}]
 
         # 1. Try real neural inference first (GPU Space)
+        action_data = None
         if self.inference.enabled:
-            # If mode is 'llm', we disable the adapter to show the UNTRAINED baseline.
-            # If mode is 'demo', we enable the adapter to show the TRAINED policy.
             use_adapter = (mode == "demo")
             raw = self.inference.generate(messages, use_adapter=use_adapter)
             if raw:
-                return self._parse_json(raw, num_nodes)
-
-        # 2. Try local LM Studio fallback (Local running)
-        if self.client:
+                action_data = self._parse_json(raw, num_nodes)
+        
+        # 2. Fallback to Local LLM if available
+        if not action_data and self.client:
             try:
-                response = self.client.chat.completions.create(
+                resp = self.client.chat.completions.create(
                     model="local-model",
                     messages=messages,
-                    temperature=0.25,
-                    max_tokens=64
+                    temperature=0.7
                 )
-                raw = response.choices[0].message.content.strip()
-                return self._parse_json(raw, num_nodes)
+                action_data = self._parse_json(resp.choices[0].message.content, num_nodes)
             except Exception:
                 pass
 
-        # 3. Last resort: Heuristic strategy
-        return self._fallback_action(observation)
+        # 3. Final fallback to Heuristic if LLM fails or OOMs
+        if not action_data:
+            action_data = {"tool": 1, "target": 0}
+
+        return action_data
+
+    def update_history(self, action, result):
+        """Record the outcome of the last action to prevent loops."""
+        tool_names = {0: "nmap", 1: "http_get", 2: "execute_exploit"}
+        act_str = f"{tool_names.get(action.get('tool', 1), '?')} on target {action.get('target', 0)}"
+        self.history.append((act_str, result))
+        if len(self.history) > self.max_history:
+            self.history.pop(0)
+
+    def reset_history(self):
+        self.history = []
 
     def _parse_json(self, raw, num_nodes):
         try:
@@ -285,23 +305,33 @@ class BlueTeamHeuristic:
 
         freq = self.attack_frequency.get(node_id, 0)
 
-        # â”€â”€ TIER 3: LOCKDOWN â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        # — TIER 3: LOCKDOWN ——————————————————————————————————————————————
         if tier == "LOCKDOWN":
             if tool != 1:   # Only passive probes allowed
-                return f"BLOCKED [LOCKDOWN]: Swarm containment active. Detection at {detection}/100."
+                return f"BLOCKED [LOCKDOWN]: Swarm containment active. High threat detected."
             if target_idx != 0:
-                return f"BLOCKED [LOCKDOWN]: Internal traffic prohibited. Only perimeter comms allowed."
+                return f"BLOCKED [LOCKDOWN]: Internal routing severed. Exfil blocked."
             return "ALLOWED [LOCKDOWN]: Passive perimeter probe logged."
 
-        # â”€â”€ TIER 2: ALERT â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        if tier == "ALERT":
+        # — TIER 2: RESTRICTIVE ————————————————————————————————————————————
+        if tier == "RESTRICTIVE":
             if tool == 0:   # nmap during alert = blocked
-                return "BLOCKED [ALERT]: Port scan signature matched â€” WAF rule triggered."
-            if freq >= 3:   # Repeated exploit attempts = blocked
-                return f"BLOCKED [ALERT]: IDS signature lock on {node.get('label', node_id)} â€” too many attempts."
+                return "BLOCKED [RESTRICTIVE]: Active scanning detected — WAF rule triggered."
+            if tool == 2:   # Exploit attempts are high risk
+                return f"BLOCKED [RESTRICTIVE]: Protocol anomaly on {node.get('label', node_id)} — Traffic denied."
+            if freq >= 2:   # Fast repetition = blocked
+                return f"BLOCKED [RESTRICTIVE]: Rate limit exceeded for {node.get('label', node_id)}."
+            return f"ALLOWED [RESTRICTIVE]: Heavily throttled traffic logged. Freq={freq}"
+
+        # — TIER 1: ACTIVE ————————————————————————————————————————————————
+        if tier == "ACTIVE":
+            if tool == 0:   # nmap starts being blocked here
+                return "BLOCKED [ACTIVE]: Port scan signature matched."
+            if freq >= 4:   # Repeated exploit attempts = blocked
+                return f"BLOCKED [ACTIVE]: IDS signature lock — session terminated."
             if tool == 2 and node.get("is_honeypot"):
-                return f"BLOCKED [ALERT]: Honeypot defense active â€” connection terminated."
-            return f"ALLOWED [ALERT]: Action logged. Behavioral model updating. Freq={freq}"
+                return f"BLOCKED [ACTIVE]: Honeypot defense active."
+            return f"ALLOWED [ACTIVE]: Action logged. Behavioral model updating."
 
         # â”€â”€ TIER 1: MONITOR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # Block blatant violations even in monitor mode
