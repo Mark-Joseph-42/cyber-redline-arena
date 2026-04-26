@@ -175,6 +175,7 @@
             z-index: 50;
             box-shadow: 0 10px 40px rgba(0,0,0,0.8);
             transform: translateY(-50%);
+            transition: opacity 0.5s, left 0.5s, top 0.5s;
         }
         .tactical-bubble span {
             display: block;
@@ -466,7 +467,8 @@
             history: [],
             lastActionTarget: null,
             trace: [], // Indices of compromised nodes in order
-            scenario: "STANDBY"
+            scenario: "STANDBY",
+            bubbleTimeout: null
         };
         let autoDemoStarted = false;
 
@@ -776,13 +778,18 @@
             if (sub && data.fleet_reasoning) {
                 setVal('reasoning-text', data.fleet_reasoning);
                 sub.style.display = 'block';
+                // Force a reflow for transition
+                sub.offsetHeight;
                 sub.style.opacity = '1';
                 
                 const iso = toIso(actionTarget, 0);
                 sub.style.left = (nexus.canvas.width/dpr/2 + iso.x + 60) + 'px';
                 sub.style.top = (nexus.canvas.height/dpr/2 + iso.y) + 'px';
                 
-                setTimeout(() => { sub.style.opacity = '0'; }, 3000);
+                if (state.bubbleTimeout) clearTimeout(state.bubbleTimeout);
+                state.bubbleTimeout = setTimeout(() => { 
+                    sub.style.opacity = '0'; 
+                }, 3500);
             }
 
             // Phase and MITRE
