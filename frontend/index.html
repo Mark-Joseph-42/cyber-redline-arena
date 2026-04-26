@@ -32,8 +32,7 @@
             background: var(--bg);
             color: var(--text);
             font-family: var(--font-main);
-            overflow: hidden;
-            height: 100vh;
+            min-height: 100vh;
             display: flex;
             flex-direction: column;
             background-image: 
@@ -41,6 +40,8 @@
                 linear-gradient(rgba(10, 15, 25, 0.8) 1px, transparent 1px),
                 linear-gradient(90deg, rgba(10, 15, 25, 0.8) 1px, transparent 1px);
             background-size: 100% 100%, 40px 40px, 40px 40px;
+            overflow-x: hidden;
+            overflow-y: auto;
         }
 
         /* --- TACTICAL HUD TOP --- */
@@ -110,6 +111,8 @@
             z-index: 90;
             border-radius: 4px;
             transition: 0.3s;
+            max-height: calc(100% - 150px);
+            overflow-y: auto;
         }
         #mission-brief h3 {
             font-size: 0.7rem;
@@ -150,6 +153,7 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            min-height: 500px; /* Ensure enough space for the network graph */
         }
 
         #nexus-canvas {
@@ -183,12 +187,12 @@
 
         /* --- BOTTOM CONTROL CENTER --- */
         #bottom-panel {
-            height: 320px;
+            min-height: 350px;
             background: var(--surface);
             border-top: 1px solid var(--border);
             display: grid;
             grid-template-columns: 1fr 340px 380px;
-            overflow: hidden;
+            /* Remove overflow:hidden to allow flex or inner scroll */
         }
 
         .terminal-container {
