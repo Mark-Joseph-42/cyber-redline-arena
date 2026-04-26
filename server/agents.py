@@ -501,7 +501,7 @@ class AttackPlaybookGenerator:
     """
 
     def __init__(self):
-        self.inference = UnslothInferenceAdapter()
+        self.inference = RealLLMAdapter()
         self.client = OpenAI(base_url=LM_STUDIO_URL, api_key=API_KEY) if OpenAI else None
 
     def generate(self, current_state, policy_name="unknown"):
