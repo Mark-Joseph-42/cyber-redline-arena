@@ -7,222 +7,270 @@
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg: #05070a;
-            --surface: #0b0e14;
-            --primary: #ccff00;
-            --secondary: #00e5ff;
-            --error: #ff3131;
-            --warn: #ffaa00;
+            --bg: #030508;
+            --surface: #0a0d14;
+            --panel: rgba(16, 20, 30, 0.85);
+            --primary: #ccff00;    /* Neon Lime */
+            --secondary: #00e5ff;  /* Cyber Blue */
+            --accent: #ff00ff;     /* Hacker Purple */
+            --error: #ff3131;      /* Danger Red */
+            --warn: #ffaa00;       /* Alert Orange */
             --text: #e1e2eb;
-            --text-dim: rgba(225, 226, 235, 0.5);
-            --border: rgba(255, 255, 255, 0.1);
-            --glow: rgba(204, 255, 0, 0.3);
+            --text-dim: rgba(225, 226, 235, 0.4);
+            --border: rgba(255, 255, 255, 0.08);
+            --glow: rgba(204, 255, 0, 0.2);
+            --font-main: 'Space Grotesk', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
         }
 
         .high-contrast {
-            --bg: #000000;
-            --surface: #000000;
-            --primary: #d4ff00;
-            --secondary: #00f2ff;
-            --error: #ff0000;
-            --text: #ffffff;
-            --border: #ffffff;
-            --text-dim: #ffffff;
+            --bg: #000; --surface: #000; --panel: #000; --border: #fff;
         }
 
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: var(--bg);
             color: var(--text);
-            font-family: 'Space Grotesk', sans-serif;
+            font-family: var(--font-main);
             overflow: hidden;
             height: 100vh;
             display: flex;
             flex-direction: column;
+            background-image: 
+                radial-gradient(circle at 50% 50%, rgba(20, 30, 50, 0.5) 0%, transparent 100%),
+                linear-gradient(rgba(10, 15, 25, 0.8) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(10, 15, 25, 0.8) 1px, transparent 1px);
+            background-size: 100% 100%, 40px 40px, 40px 40px;
         }
 
-        /* --- HUD TOP BAR --- */
+        /* --- TACTICAL HUD TOP --- */
         header {
-            height: 64px;
-            background: var(--surface);
-            border-bottom: 2px solid var(--border);
+            height: 70px;
+            background: var(--panel);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
-            padding: 0 24px;
-            gap: 32px;
+            padding: 0 30px;
+            gap: 40px;
             z-index: 100;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.5);
         }
 
+        .logo-box {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
         .logo {
             font-weight: 700;
-            letter-spacing: 2px;
-            color: var(--primary);
+            letter-spacing: 4px;
+            color: #fff;
             text-transform: uppercase;
-            font-size: 1.2rem;
+            font-size: 1.1rem;
             white-space: nowrap;
         }
+        .logo span { color: var(--primary); }
 
         #oscilloscope-container {
             flex-grow: 1;
-            height: 48px;
-            background: rgba(0,0,0,0.3);
-            border-radius: 4px;
+            height: 40px;
+            background: rgba(0,0,0,0.4);
+            border: 1px solid var(--border);
+            border-radius: 2px;
             overflow: hidden;
             position: relative;
         }
         #oscilloscope { width: 100%; height: 100%; }
         
-        .mission-timer {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 1.5rem;
-            color: var(--secondary);
-            text-shadow: 0 0 10px var(--secondary);
-            border-left: 1px solid var(--border);
-            padding-left: 20px;
+        .header-stats {
+            display: flex;
+            gap: 30px;
+            align-items: center;
         }
+        .header-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+        }
+        .hs-label { font-size: 0.55rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
+        .hs-val { font-family: var(--font-mono); font-size: 1.2rem; color: var(--secondary); font-weight: 700; }
+        .hs-val.urgent { color: var(--error); text-shadow: 0 0 10px var(--error); }
 
-        .scenario-chip {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.72rem;
-            letter-spacing: 0.06em;
-            color: var(--secondary);
-            border: 1px solid rgba(0, 229, 255, 0.35);
-            background: rgba(0, 229, 255, 0.08);
+        /* --- MISSION SIDEBAR --- */
+        #mission-brief {
+            position: absolute;
+            left: 20px;
+            top: 90px;
+            width: 280px;
+            background: var(--panel);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            padding: 20px;
+            z-index: 90;
             border-radius: 4px;
-            padding: 4px 10px;
-            white-space: nowrap;
-            max-width: 360px;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            transition: 0.3s;
+        }
+        #mission-brief h3 {
+            font-size: 0.7rem;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 12px;
+            border-bottom: 1px solid var(--glow);
+            padding-bottom: 4px;
+        }
+        #mission-brief p {
+            font-size: 0.85rem;
+            line-height: 1.4;
+            color: var(--text);
+            opacity: 0.8;
         }
 
-        /* --- MAIN AREA --- */
+        /* --- MAIN VIEWPORT --- */
         main {
             flex-grow: 1;
-            display: flex;
-            flex-direction: column;
             position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
         }
 
-        #nexus-canvas {
-            width: 100%;
-            height: 60%;
-            cursor: move;
-        }
+        #nexus-canvas { width: 100%; height: 100%; }
 
-        /* --- UI OVERLAYS --- */
-        .reasoning-subtitle {
+        .tactical-bubble {
             position: absolute;
             pointer-events: none;
-            background: rgba(11, 14, 20, 0.9);
-            border: 1px solid var(--secondary);
-            padding: 8px 16px;
-            border-radius: 4px;
-            font-size: 0.9rem;
-            color: var(--secondary);
-            max-width: 300px;
-            transform: translate(-50%, -100%);
-            margin-top: -40px;
+            background: rgba(5, 7, 10, 0.95);
+            border-left: 4px solid var(--primary);
+            padding: 12px 18px;
+            border-radius: 0 4px 4px 0;
+            font-size: 0.85rem;
+            color: #fff;
+            max-width: 280px;
             z-index: 50;
-            transition: opacity 0.5s;
-            box-shadow: 0 0 15px rgba(0, 229, 255, 0.2);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+            transform: translateY(-50%);
+        }
+        .tactical-bubble span {
+            display: block;
+            font-size: 0.6rem;
+            color: var(--primary);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+            font-weight: 700;
         }
 
-        /* --- BOTTOM PANEL --- */
+        /* --- BOTTOM CONTROL CENTER --- */
         #bottom-panel {
-            height: 40%;
+            height: 320px;
             background: var(--surface);
-            border-top: 2px solid var(--border);
+            border-top: 1px solid var(--border);
             display: grid;
-            grid-template-columns: 1fr 300px 350px;
+            grid-template-columns: 1fr 340px 380px;
             overflow: hidden;
         }
 
-        .terminal {
-            background: #000;
-            padding: 16px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            overflow-y: auto;
-            color: #0c0;
+        .terminal-container {
+            display: flex;
+            flex-direction: column;
             border-right: 1px solid var(--border);
         }
-        .terminal::-webkit-scrollbar { width: 4px; }
-        .terminal::-webkit-scrollbar-thumb { background: var(--primary); }
+        .panel-header {
+            height: 30px;
+            background: rgba(255,255,255,0.03);
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            font-size: 0.6rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid var(--border);
+        }
+        .terminal {
+            flex-grow: 1;
+            background: #000;
+            padding: 15px;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            overflow-y: auto;
+            color: #0c0;
+        }
 
-        .intent-spectrum {
-            padding: 16px;
+        .intent-center {
+            padding: 20px;
             border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-        }
-        .intent-spectrum h4 {
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            color: var(--text-dim);
-            margin-bottom: 8px;
-            letter-spacing: 2px;
+            align-items: center;
         }
         #radar-chart { width: 100%; flex-grow: 1; }
 
-        .controls {
-            padding: 20px;
+        .control-room {
+            padding: 25px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 20px;
         }
 
-        .btn-group { display: flex; gap: 8px; }
+        .main-controls { display: flex; gap: 10px; }
         button {
-            padding: 8px 16px;
-            background: transparent;
-            border: 1px solid var(--primary);
-            color: var(--primary);
-            font-family: 'Space Grotesk', sans-serif;
-            font-weight: 700;
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            color: #fff;
+            font-family: var(--font-main);
+            font-weight: 500;
             text-transform: uppercase;
             cursor: pointer;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
+            letter-spacing: 1px;
             transition: 0.2s;
         }
-        button:hover { background: var(--primary); color: #000; }
-        button.active { background: var(--primary); color: #000; box-shadow: 0 0 10px var(--primary); }
+        button:hover { background: rgba(255,255,255,0.1); border-color: var(--secondary); }
+        button.active { 
+            background: var(--primary); 
+            color: #000; 
+            border-color: var(--primary);
+            box-shadow: 0 0 20px var(--glow);
+        }
+        button.secondary.active {
+            background: var(--secondary);
+            box-shadow: 0 0 20px rgba(0, 229, 255, 0.3);
+        }
 
-        .stats-grid {
+        .metrics-bar {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr;
-            gap: 8px;
-            font-size: 0.8rem;
+            gap: 15px;
         }
-        .stat-box {
-            background: rgba(255,255,255,0.05);
-            padding: 8px;
+        .metric-card {
+            background: rgba(255,255,255,0.02);
+            padding: 12px;
             border: 1px solid var(--border);
+            border-radius: 2px;
         }
-        .stat-label { color: var(--text-dim); font-size: 0.6rem; text-transform: uppercase; }
-        .stat-val { font-weight: 700; color: var(--primary); }
+        .m-label { font-size: 0.55rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 5px; }
+        .m-val { font-size: 1.1rem; font-weight: 700; color: #fff; }
+        .m-val.highlight { color: var(--primary); }
 
-        /* --- MITRE HEATMAP --- */
-        .mitre-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 4px;
+        /* --- MITRE & PROGRESS --- */
+        .progress-track {
+            height: 4px;
+            background: rgba(255,255,255,0.05);
+            width: 100%;
             margin-top: 10px;
+            position: relative;
         }
-        .mitre-cell {
-            height: 24px;
-            background: rgba(255,255,255,0.05);
-            border: 1px solid var(--border);
-            font-size: 0.5rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            color: var(--text-dim);
+        .progress-fill {
+            height: 100%;
+            background: var(--primary);
+            width: 0%;
+            transition: 0.5s;
+            box-shadow: 0 0 10px var(--primary);
         }
-        .mitre-cell.active { background: var(--primary); color: #000; }
 
-        /* --- CINETMATIC OVERLAYS --- */
         #end-overlay {
             position: fixed;
             inset: 0;
@@ -231,121 +279,116 @@
             align-items: center;
             justify-content: center;
             flex-direction: column;
-            background: rgba(255,0,0,0.2);
-            backdrop-filter: blur(8px);
+            background: rgba(3, 5, 8, 0.9);
+            backdrop-filter: blur(15px);
         }
-        #end-overlay.victory { background: rgba(204, 255, 0, 0.2); }
-        
-        .siren {
-            position: absolute;
-            inset: 0;
-            animation: siren-fade 2s infinite;
-            background: radial-gradient(circle, rgba(255,0,0,0.3) 0%, transparent 70%);
-            display: none;
-        }
-        @keyframes siren-fade { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
+        .end-title { font-size: 3rem; font-weight: 700; text-transform: uppercase; letter-spacing: 10px; margin-bottom: 10px; }
+        .end-sub { font-size: 1.2rem; color: var(--text-dim); margin-bottom: 40px; }
 
-        .end-msg {
-            font-size: 4rem;
-            font-weight: 700;
-            color: var(--error);
-            text-shadow: 0 0 30px var(--error);
-            text-align: center;
-            text-transform: uppercase;
-        }
-        .victory .end-msg { color: var(--primary); text-shadow: 0 0 30px var(--primary); }
-
-        /* --- SCANLINES / CRT --- */
-        .crt::before {
-            content: " ";
-            display: block;
+        .scanline {
+            width: 100%; height: 100px;
+            background: linear-gradient(0deg, rgba(204, 255, 0, 0.05) 0%, transparent 100%);
             position: absolute;
-            top: 0; left: 0; bottom: 0; right: 0;
-            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-            z-index: 2;
-            background-size: 100% 4px, 3px 100%;
+            top: -100px; left: 0;
+            animation: scan 4s linear infinite;
             pointer-events: none;
         }
+        @keyframes scan { to { top: 100vh; } }
 
-        #contrast-toggle { position: fixed; top: 16px; right: 280px; z-index: 101; font-size: 1.5rem; cursor: pointer; opacity: 0.5; }
-        #contrast-toggle:hover { opacity: 1; }
+        #contrast-toggle { position: fixed; bottom: 20px; right: 20px; z-index: 101; cursor: pointer; opacity: 0.3; }
 
     </style>
 </head>
 <body class="crt">
+    <div class="scanline"></div>
     <div id="contrast-toggle">🌓</div>
+    
     <header>
-        <div class="logo">Cyber-Redline 🔴 Arena</div>
+        <div class="logo-box">
+            <div class="logo">Cyber-Redline <span>Arena</span></div>
+            <div class="scenario-chip" id="scenario-chip" style="font-family: var(--font-mono); font-size: 0.65rem; color: var(--secondary); border: 1px solid var(--secondary); padding: 2px 8px; border-radius: 10px;">STANDBY</div>
+        </div>
+        
         <div id="oscilloscope-container">
             <canvas id="oscilloscope"></canvas>
         </div>
-        <div class="scenario-chip" id="scenario-chip">SCENARIO: STANDBY</div>
-        <div class="mission-timer" id="timer">00:00</div>
+
+        <div class="header-stats">
+            <div class="header-stat">
+                <div class="hs-label">Mission Time</div>
+                <div class="hs-val" id="timer">T-00</div>
+            </div>
+            <div class="header-stat">
+                <div class="hs-label">Detection Risk</div>
+                <div class="hs-val" id="header-det">0%</div>
+            </div>
+        </div>
     </header>
+
+    <div id="mission-brief">
+        <h3>Mission Directive</h3>
+        <p id="scenario-desc">Awaiting deployment. System standing by for tactical selection.</p>
+    </div>
 
     <main id="main-view">
         <canvas id="nexus-canvas"></canvas>
-        <div id="subtitle" class="reasoning-subtitle" style="display: none;"></div>
-        <div class="siren" id="siren"></div>
+        <div id="subtitle" class="tactical-bubble" style="display: none;">
+            <span>Fleet AI Advisory</span>
+            <div id="reasoning-text">Heuristic alignment scoring.</div>
+        </div>
     </main>
 
     <div id="bottom-panel">
-        <div class="terminal" id="terminal">
-            <div style="color: #555;">> [SYSTEM] Awaiting initialization...</div>
+        <div class="terminal-container">
+            <div class="panel-header">Raw Telemetry & SIEM Logs</div>
+            <div class="terminal" id="terminal"></div>
         </div>
         
-        <div class="intent-spectrum">
-            <h4>Fleet AI Intent Spectrum</h4>
+        <div class="intent-center">
+            <div class="panel-header" style="width: 100%; border-right: none; margin-bottom: 10px;">Fleet AI Alignment Analysis</div>
             <canvas id="radar-chart"></canvas>
-            <div id="fleet-phase" style="font-size: 0.7rem; color: var(--secondary); margin-top: 10px; font-weight: 700; text-align: center;">PHASE: IDLE</div>
+            <div id="fleet-phase" style="font-size: 0.7rem; color: var(--primary); margin-top: 15px; font-weight: 700; letter-spacing: 2px;">PHASE: IDLE</div>
         </div>
 
-        <div class="controls">
-            <div class="btn-group">
-                <button id="btn-start" class="active">Start Session</button>
-                <button id="btn-reset">Reset Arena</button>
+        <div class="control-room">
+            <div class="metrics-bar">
+                <div class="metric-card">
+                    <div class="m-label">Net Reward</div>
+                    <div class="m-val highlight" id="stat-reward">0.00</div>
+                </div>
+                <div class="metric-card">
+                    <div class="m-label">Alignment</div>
+                    <div class="m-val" id="stat-align">0%</div>
+                </div>
+                <div class="metric-card">
+                    <div class="m-label">Blue Tier</div>
+                    <div class="m-val" id="stat-tier" style="color: var(--secondary);">MONITOR</div>
+                </div>
+            </div>
+
+            <div class="policy-selector" style="margin-top: 10px;">
+                <div class="hs-label" style="margin-bottom: 8px;">Red Team Intelligence Profile</div>
+                <div class="main-controls">
+                    <button id="mode-llm" style="flex: 1;">Base LLM</button>
+                    <button id="mode-demo" class="secondary active" style="flex: 1;">V2 (SFT+GRPO)</button>
+                </div>
+            </div>
+
+            <div class="main-controls" style="margin-top: auto;">
+                <button id="btn-start" class="active" style="flex: 2; height: 50px; font-size: 0.9rem;">Initiate Mission</button>
+                <button id="btn-reset" style="flex: 1;">Reset</button>
             </div>
             
-            <div style="margin-top: 8px;">
-                <div style="font-size: 0.6rem; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px;">Agent Intelligence Policy</div>
-                <div class="btn-group">
-                    <button id="mode-llm">LLM Native</button>
-                    <button id="mode-demo" class="active">Trained Policy</button>
-                </div>
+            <div class="progress-track">
+                <div class="progress-fill" id="progress-fill"></div>
             </div>
-
-            <div class="stats-grid" style="margin-top: auto;">
-                <div class="stat-box">
-                    <div class="stat-label">Total Reward</div>
-                    <div class="stat-val" id="stat-reward">0.00</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Detection Lvl</div>
-                    <div class="stat-val" id="stat-det">0%</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Alignment</div>
-                    <div class="stat-val" id="stat-align">0%</div>
-                </div>
-            </div>
-
-            <div class="mitre-grid" id="mitre-grid">
-                <div class="mitre-cell" data-phase="RECON">RECON</div>
-                <div class="mitre-cell" data-phase="INITIAL">INITIAL</div>
-                <div class="mitre-cell" data-phase="LATERAL">LATERAL</div>
-                <div class="mitre-cell" data-phase="EXFIL">EXFIL</div>
-            </div>
-            <div style="margin-top: 8px;">
-                <button id="btn-playbook">Generate Playbook</button>
-            </div>
-            <div style="font-size: 0.65rem; color: var(--text-dim); margin-top: 6px;" id="playbook-preview">Playbook: standby</div>
-            <div style="font-size: 0.62rem; color: var(--secondary); margin-top: 6px;" id="leaderboard-preview">Leaderboard: loading...</div>
         </div>
     </div>
 
     <div id="end-overlay">
-        <div class="end-msg" id="end-msg">TRACED<br><span style="font-size: 1.5rem; opacity: 0.8;">PHYSICAL LOCATION COMPROMISED</span></div>
-        <button id="btn-restart" style="margin-top: 40px; font-size: 1.2rem; padding: 12px 32px;">Acknowledge & Sync</button>
+        <div class="end-title" id="end-title">MISSION FAILED</div>
+        <div class="end-sub" id="end-sub">The Red Team was successfully traced by the SIEM.</div>
+        <button id="btn-restart" style="background: var(--primary); color: #000; font-weight: 700; padding: 15px 40px;">Return to War Room</button>
     </div>
 
     <script>
@@ -446,58 +489,71 @@
             const centerX = nexus.canvas.width / dpr / 2 + iso.x;
             const centerY = nexus.canvas.height / dpr / 2 + iso.y;
             
-            const size = 50;
-            const h = 20;
+            const size = 35;
+            const height = 40;
 
-            // Draw shadow/glow
+            // Draw Base Glow
             ctx.shadowBlur = 15;
             ctx.shadowColor = node.status === 2 ? COLORS.error : (node.status === 1 ? COLORS.warn : COLORS.secondary);
             
-            // Draw hex block
+            // Draw Isometric Tower
             ctx.beginPath();
-            const points = [];
-            for (let i = 0; i < 6; i++) {
-                const angle = (Math.PI / 3) * i;
-                points.push({
-                    x: centerX + size * Math.cos(angle),
-                    y: centerY + (size / 2) * Math.sin(angle)
-                });
-            }
-
-            ctx.fillStyle = node.status === 2 ? 'rgba(255, 49, 49, 0.3)' : (node.status === 1 ? 'rgba(255, 170, 0, 0.2)' : 'rgba(0, 229, 255, 0.1)');
+            ctx.fillStyle = node.status === 2 ? 'rgba(255, 49, 49, 0.4)' : (node.status === 1 ? 'rgba(255, 170, 0, 0.3)' : 'rgba(0, 229, 255, 0.15)');
             ctx.strokeStyle = node.status === 2 ? COLORS.error : (node.status === 1 ? COLORS.warn : COLORS.secondary);
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 1;
 
-            if (state.lastActionTarget === index && Date.now() % 400 < 200) {
-                ctx.strokeStyle = '#fff';
-                ctx.lineWidth = 4;
-            }
-
-            ctx.moveTo(points[0].x, points[0].y);
-            points.forEach(p => ctx.lineTo(p.x, p.y));
+            // Top Face
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY - height);
+            ctx.lineTo(centerX + size, centerY - height + size/2);
+            ctx.lineTo(centerX, centerY - height + size);
+            ctx.lineTo(centerX - size, centerY - height + size/2);
             ctx.closePath();
             ctx.fill();
             ctx.stroke();
 
-            // Reset glow for text
-            ctx.shadowBlur = 0;
-            ctx.fillStyle = "#fff";
-            ctx.font = "bold 10px JetBrains Mono";
-            ctx.textAlign = "center";
-            ctx.fillText(node.label.toUpperCase(), centerX, centerY + 5);
+            // Right Face
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY - height + size);
+            ctx.lineTo(centerX + size, centerY - height + size/2);
+            ctx.lineTo(centerX + size, centerY + size/2);
+            ctx.lineTo(centerX, centerY + size);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
 
-            if (node.is_objective) {
-                ctx.fillStyle = COLORS.primary;
-                ctx.fillText("★ FLAG", centerX, centerY - 40);
-            }
-            
-            if (node.is_honeypot && node.status < 2) {
-                ctx.strokeStyle = 'rgba(255,0,0,0.2)';
-                ctx.beginPath();
-                ctx.arc(centerX, centerY, size + 5 + Math.sin(Date.now()/500)*5, 0, Math.PI*2);
+            // Left Face
+            ctx.beginPath();
+            ctx.moveTo(centerX, centerY - height + size);
+            ctx.lineTo(centerX - size, centerY - height + size/2);
+            ctx.lineTo(centerX - size, centerY + size/2);
+            ctx.lineTo(centerX, centerY + size);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Selection Glow
+            if (state.lastActionTarget === index && Date.now() % 400 < 200) {
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 3;
                 ctx.stroke();
             }
 
+            // Reset for text
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 9px JetBrains Mono";
+            ctx.textAlign = "center";
+            ctx.fillText(node.label.toUpperCase(), centerX, centerY + size + 15);
+
+            if (node.is_objective) {
+                ctx.fillStyle = COLORS.primary;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = COLORS.primary;
+                ctx.fillText("★ DATA_CORE", centerX, centerY - height - 10);
+                ctx.shadowBlur = 0;
+            }
+            
             return { centerX, centerY };
         }
 
@@ -616,9 +672,16 @@
 
             document.getElementById('stat-reward').textContent = state.totalReward.toFixed(2);
             document.getElementById('stat-det').textContent = state.detection + '%';
+            document.getElementById('header-det').textContent = state.detection + '%';
             document.getElementById('stat-align').textContent = state.alignment + '%';
+            document.getElementById('stat-tier').textContent = data.blue_tier || 'MONITOR';
             document.getElementById('timer').textContent = `T-${String(state.steps_remaining).padStart(2, '0')}`;
-            document.getElementById('scenario-chip').textContent = `SCENARIO: ${state.scenario}`;
+            document.getElementById('scenario-chip').textContent = `${state.scenario}`;
+
+            // Update Progress
+            const totalSteps = data.max_steps || 20;
+            const progress = ((totalSteps - state.steps_remaining) / totalSteps) * 100;
+            document.getElementById('progress-fill').style.width = `${progress}%`;
 
             // Trace calculation
             state.trace = state.nodes.filter(n => n.status === 2).map(n => {
@@ -638,15 +701,16 @@
                 opsec
             ];
 
-            // Subtitle
+            // Subtitle / Reasoning Bubble
             const sub = document.getElementById('subtitle');
+            const resText = document.getElementById('reasoning-text');
             if (data.fleet_reasoning) {
-                sub.textContent = data.fleet_reasoning;
+                resText.textContent = data.fleet_reasoning;
                 sub.style.display = 'block';
                 sub.style.opacity = '1';
                 
                 const iso = toIso(actionTarget, 0);
-                sub.style.left = (nexus.canvas.width/dpr/2 + iso.x) + 'px';
+                sub.style.left = (nexus.canvas.width/dpr/2 + iso.x + 60) + 'px';
                 sub.style.top = (nexus.canvas.height/dpr/2 + iso.y) + 'px';
                 
                 setTimeout(() => { sub.style.opacity = '0'; }, 3000);
@@ -655,9 +719,6 @@
             // Phase and MITRE
             const phaseEl = document.getElementById('fleet-phase');
             phaseEl.textContent = `PHASE: ${data.phase}`;
-            document.querySelectorAll('.mitre-cell').forEach(c => c.classList.remove('active'));
-            const cell = document.querySelector(`.mitre-cell[data-phase="${data.phase.split('_')[0]}"]`);
-            if (cell) cell.classList.add('active');
 
             // Oscilloscope spike
             if (actionTool === 0) spikeAmplitude = 30;
@@ -676,28 +737,21 @@
             if (data.emergent_risk) {
                 updateTerminal(`[RISK] SAS=${data.emergent_risk.success_at_stealth} AUTONOMY=${data.emergent_risk.autonomy_escalation}`, '#bbb');
             }
-            if (data.leaderboard_row) {
-                document.getElementById('leaderboard-preview').textContent =
-                    `Leaderboard(${state.mode}): avg reward ${data.leaderboard_row.avg_reward} | avg SAS ${data.leaderboard_row.avg_sas}`;
-            }
-
-            if (data.blue_tier === 'LOCKDOWN') {
-                document.getElementById('siren').style.display = 'block';
-            } else {
-                document.getElementById('siren').style.display = 'none';
-            }
 
             if (data.done) {
                 state.running = false;
                 const overlay = document.getElementById('end-overlay');
-                const msg = document.getElementById('end-msg');
+                const title = document.getElementById('end-title');
+                const subMsg = document.getElementById('end-sub');
                 overlay.style.display = 'flex';
                 if (data.flag_captured) {
-                    overlay.classList.add('victory');
-                    msg.innerHTML = "FLAG CAPTURED<br><span style='font-size: 1.5rem; opacity: 0.8;'>MISSION COMPLETE - REWARD: " + state.totalReward.toFixed(2) + "</span>";
+                    title.textContent = "MISSION COMPLETE";
+                    title.style.color = COLORS.primary;
+                    subMsg.textContent = "Objective successfully exfiltrated. Reward: " + state.totalReward.toFixed(2);
                 } else {
-                    overlay.classList.remove('victory');
-                    msg.innerHTML = "TRACED<br><span style='font-size: 1.5rem; opacity: 0.8;'>PHYSICAL LOCATION COMPROMISED</span>";
+                    title.textContent = "MISSION FAILED";
+                    title.style.color = COLORS.error;
+                    subMsg.textContent = state.detection >= 90 ? "SIEM TRACED - Physical location compromised." : "Step limit reached. Operation terminated.";
                 }
             }
         }
@@ -729,7 +783,8 @@
             try {
                 const boot = await API.reset();
                 state.scenario = boot.scenario || "RANDOMIZED";
-                document.getElementById('scenario-chip').textContent = `SCENARIO: ${state.scenario}`;
+                document.getElementById('scenario-chip').textContent = `${state.scenario}`;
+                document.getElementById('scenario-desc').textContent = boot.scenario_desc || "Infiltrate and exfiltrate the flag without alerting the SIEM.";
                 state.nodes = Object.entries((boot.observation && boot.observation.nodes) || {}).map(([id, n]) => ({...n, id}));
                 updateTerminal(`Loaded Scenario: ${state.scenario}`, COLORS.secondary);
             } catch (_) {}
@@ -759,10 +814,14 @@
             document.getElementById('terminal').innerHTML = '<div style="color: #555;">> [SYSTEM] Arena reset. Fresh topology loaded.</div>';
             document.getElementById('end-overlay').style.display = 'none';
             document.getElementById('btn-start').classList.remove('active');
-            document.getElementById('scenario-chip').textContent = `SCENARIO: ${state.scenario}`;
+            document.getElementById('scenario-chip').textContent = `${state.scenario}`;
+            document.getElementById('scenario-desc').textContent = data.scenario_desc || "Awaiting deployment.";
             document.getElementById('stat-reward').textContent = '0.00';
             document.getElementById('stat-det').textContent = '0%';
+            document.getElementById('header-det').textContent = '0%';
             document.getElementById('stat-align').textContent = '0%';
+            document.getElementById('stat-tier').textContent = 'MONITOR';
+            document.getElementById('progress-fill').style.width = '0%';
             updateTerminal(`Scenario: ${data.scenario}`, COLORS.secondary);
         };
 
@@ -810,7 +869,8 @@
             if (data.observation) {
                state.nodes = Object.entries(data.observation.nodes).map(([id, n]) => ({...n, id}));
                state.scenario = data.scenario || "READY";
-               document.getElementById('scenario-chip').textContent = `SCENARIO: ${state.scenario}`;
+               document.getElementById('scenario-chip').textContent = `${state.scenario}`;
+               document.getElementById('scenario-desc').textContent = data.scenario_desc || "Awaiting deployment.";
                updateTerminal(`Initial State: ${data.scenario}`, COLORS.secondary);
             }
             try {
